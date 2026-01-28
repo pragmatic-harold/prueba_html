@@ -1,0 +1,1103 @@
+<h1 style="margin-top:0,0000pt;margin-bottom:6,0000pt;line-height:114%;"><strong><span style="font-family:Arial;color:rgb(31,31,31);font-weight:bold;font-size:32px;">INFORME T&Eacute;CNICO: ARQUITECTURA DE WORKERS Y GESTI&Oacute;N DE RECURSOS EN ODOO.SH</span></strong></h1>
+<h2 style="margin-top:0,0000pt;margin-bottom:6,0000pt;line-height:114%;"><strong><span style="font-family:Arial;color:rgb(31,31,31);font-weight:bold;font-size:24px;">&nbsp;</span></strong></h2>
+<h2 style="margin-top:0,0000pt;margin-bottom:6,0000pt;line-height:114%;"><strong><span style="font-family:Arial;color:rgb(31,31,31);font-weight:bold;font-size:24px;">I. INTRODUCCI&Oacute;N Y FUNDAMENTOS T&Eacute;CNICOS</span></strong></h2>
+<p style="margin-bottom:12,0000pt;padding:0pt 0pt 0pt 0pt ;line-height:114%;"><span style="font-family:Arial;color:rgb(31,31,31);font-size:15px;">El presente documento establece las directrices fundamentales para la gesti&oacute;n de procesos en la plataforma Odoo.sh. La comprensi&oacute;n de la arquitectura de&nbsp;</span><em><span style="font-family:Arial;color:rgb(31,31,31);font-style:italic;font-size:15px;">workers</span></em><span style="font-family:Arial;color:rgb(31,31,31);font-size:15px;">&nbsp;es imperativa para garantizar la escalabilidad, la alta disponibilidad y la integridad de los datos en entornos productivos.</span></p>
+<h3 style="margin-top:0,0000pt;margin-bottom:6,0000pt;line-height:114%;"><strong><span style="font-family:Arial;color:rgb(31,31,31);font-weight:bold;font-size:19px;">1. Definici&oacute;n de Worker</span></strong></h3>
+<p style="margin-bottom:12,0000pt;padding:0pt 0pt 0pt 0pt ;line-height:114%;"><span style="font-family:Arial;color:rgb(31,31,31);font-size:15px;">En el ecosistema de Odoo, un&nbsp;</span><em><span style="font-family:Arial;color:rgb(31,31,31);font-style:italic;font-size:15px;">worker</span></em><span style="font-family:Arial;color:rgb(31,31,31);font-size:15px;">&nbsp;es un proceso independiente del sistema operativo que ejecuta una instancia del servidor para atender peticiones espec&iacute;ficas. Odoo opera bajo un modelo de&nbsp;</span><strong><span style="font-family:Arial;color:rgb(31,31,31);font-weight:bold;font-size:15px;">Multiprocesamiento (Pre-fork)</span></strong><span style="font-family:Arial;color:rgb(31,31,31);font-size:15px;">, donde un proceso &quot;Maestro&quot; gestiona la vida de m&uacute;ltiples procesos &quot;Hijos&quot;.</span></p>
+<p style="margin-right:30,0000pt;margin-left:30,0000pt;padding:0pt 0pt 0pt 0pt ;line-height:114%;"><span style="font-family:Arial;color:rgb(31,31,31);font-size:15px;">Analog&iacute;a Did&aacute;ctica (La Cocina Profesional):</span></p>
+<p style="margin-right:30,0000pt;margin-left:30,0000pt;padding:0pt 0pt 0pt 0pt ;line-height:114%;"><span style="font-family:Arial;color:rgb(31,31,31);font-size:15px;">Imagine una cocina de alto rendimiento. El Odoo Server (Master) es el Jefe de Cocina: &eacute;l no cocina platos individualmente, sino que recibe las comandas (peticiones) y las asigna a los cocineros disponibles. Los Workers son los cocineros de l&iacute;nea; cada uno prepara un plato a la vez de forma independiente. Si un cocinero se accidenta (error cr&iacute;tico), el Jefe de Cocina lo retira y trae a un relevo inmediatamente para mantener el servicio.</span></p>
+<h3 style="margin-bottom:6,0000pt;line-height:114%;"><strong><span style="font-family:Arial;color:rgb(31,31,31);font-weight:bold;font-size:19px;">2. Clasificaci&oacute;n de Procesos</span></strong></h3>
+<ul>
+    <li><span style="font-family:Arial;font-size:15px;color:rgb(0,0,0);">●&nbsp;</span><strong><span style="font-family:Arial;font-size:15px;color:rgb(31,31,31);">HTTP Workers:</span></strong><span style="font-family:Arial;font-size:15px;color:rgb(31,31,31);">&nbsp;Especializados en la gesti&oacute;n de solicitudes s&iacute;ncronas (interfaz de usuario, llamadas API, peticiones web). Su eficiencia impacta directamente en la percepci&oacute;n de velocidad del sistema.</span></li>
+    <li><span style="font-family:Arial;font-size:15px;color:rgb(0,0,0);">●&nbsp;</span><strong><span style="font-family:Arial;font-size:15px;color:rgb(31,31,31);">Cron Workers:</span></strong><span style="font-family:Arial;font-size:15px;color:rgb(31,31,31);">&nbsp;Procesos dedicados a tareas en segundo plano (</span><em><span style="font-family:Arial;font-size:15px;color:rgb(31,31,31);">background jobs</span></em><span style="font-family:Arial;font-size:15px;color:rgb(31,31,31);">). Operan de forma as&iacute;ncrona para no bloquear los canales de comunicaci&oacute;n con el usuario.</span></li>
+</ul>
+<h2 style="margin-top:6,0000pt;margin-bottom:6,0000pt;line-height:114%;"><strong><span style="font-family:Arial;color:rgb(31,31,31);font-weight:bold;font-size:24px;">II. INGENIER&Iacute;A DE CAPACIDADES Y DIMENSIONAMIENTO</span></strong></h2>
+<p style="margin-bottom:12,0000pt;padding:0pt 0pt 0pt 0pt ;line-height:114%;"><span style="font-family:Arial;color:rgb(31,31,31);font-size:15px;">El c&aacute;lculo de recursos debe responder a la capacidad nominal de la infraestructura.</span></p>
+<h3 style="margin-top:0,0000pt;margin-bottom:6,0000pt;line-height:114%;"><strong><span style="font-family:Arial;color:rgb(31,31,31);font-weight:bold;font-size:19px;">1. F&oacute;rmula de Concurrencia Nativa</span></strong></h3>
+<p style="margin-bottom:12,0000pt;padding:0pt 0pt 0pt 0pt ;line-height:114%;"><span style="font-family:Arial;color:rgb(31,31,31);font-size:15px;">La capacidad m&aacute;xima te&oacute;rica de una instancia se determina mediante la relaci&oacute;n entre los n&uacute;cleos de CPU:</span></p>
+<p style="margin-right:30,0000pt;margin-bottom:12,0000pt;margin-left:30,0000pt;padding:0pt 0pt 0pt 0pt ;line-height:114%;"><strong><span style="font-family:Arial;color:rgb(31,31,31);font-weight:bold;font-size:15px;">F&oacute;rmula:</span></strong><span style="font-family:Arial;color:rgb(31,31,31);font-size:15px;">&nbsp;(N&uacute;mero de CPUs &times; 2) + 1</span></p>
+<p style="margin-right:30,0000pt;margin-left:30,0000pt;padding:0pt 0pt 0pt 0pt ;line-height:114%;"><span style="font-family:Arial;color:rgb(31,31,31);font-size:15px;">Analog&iacute;a Did&aacute;ctica (Las Ventanillas del Banco):</span></p>
+<p style="margin-right:30,0000pt;margin-left:30,0000pt;padding:0pt 0pt 0pt 0pt ;line-height:114%;"><span style="font-family:Arial;color:rgb(31,31,31);font-size:15px;">Imagine un banco con un n&uacute;mero limitado de cajeros (Workers). Si usted tiene 4 cajeros y llegan 5 clientes simult&aacute;neamente, el quinto cliente debe esperar en fila (latencia) hasta que un cajero se libere. El &quot;+1&quot; en la f&oacute;rmula representa una ventanilla especial que solo atiende tr&aacute;mites internos (Cron), permitiendo que la oficina siga funcionando administrativamente sin detener la atenci&oacute;n al p&uacute;blico.</span></p>
+<h3 style="margin-bottom:6,0000pt;line-height:114%;"><strong><span style="font-family:Arial;color:rgb(31,31,31);font-weight:bold;font-size:19px;">2. Estimaci&oacute;n de Memoria RAM</span></strong></h3>
+<p style="margin-bottom:12,0000pt;padding:0pt 0pt 0pt 0pt ;line-height:114%;"><span style="font-family:Arial;color:rgb(31,31,31);font-size:15px;">Cada worker requiere una reserva de memoria para operar con fluidez. Se estima un requerimiento base de&nbsp;</span><strong><span style="font-family:Arial;color:rgb(31,31,31);font-weight:bold;font-size:15px;">0.8 GB por n&uacute;cleo de CPU</span></strong><span style="font-family:Arial;color:rgb(31,31,31);font-size:15px;">&nbsp;asignado al contenedor para prevenir la saturaci&oacute;n del bus de memoria y asegurar la estabilidad en picos de carga.</span></p>
+<h2 style="margin-top:0,0000pt;margin-bottom:6,0000pt;line-height:114%;"><strong><span style="font-family:Arial;color:rgb(31,31,31);font-weight:bold;font-size:24px;">III. PROTOCOLO DE MONITOREO Y TRAZABILIDAD</span></strong></h2>
+<p style="margin-bottom:12,0000pt;padding:0pt 0pt 0pt 0pt ;line-height:114%;"><span style="font-family:Arial;color:rgb(31,31,31);font-size:15px;">Ante la ausencia de paneles gr&aacute;ficos nativos para procesos individuales, se debe aplicar el protocolo de inspecci&oacute;n mediante consola.</span></p>
+<h3 style="margin-top:0,0000pt;margin-bottom:6,0000pt;line-height:114%;"><strong><span style="font-family:Arial;color:rgb(31,31,31);font-weight:bold;font-size:19px;">1. Inspecci&oacute;n de Procesos (TOP/HTOP)</span></strong></h3>
+<p style="margin-bottom:6,0000pt;padding:0pt 0pt 0pt 0pt ;line-height:114%;"><span style="font-family:Arial;color:rgb(31,31,31);font-size:15px;">Mediante el uso de la terminal de Odoo.sh, se debe supervisar la actividad de los PID (</span><em><span style="font-family:Arial;color:rgb(31,31,31);font-style:italic;font-size:15px;">Process ID</span></em><span style="font-family:Arial;color:rgb(31,31,31);font-size:15px;">). Indicadores cr&iacute;ticos:</span></p>
+<ul>
+    <li><span style="font-family:Arial;font-size:15px;color:rgb(0,0,0);">●&nbsp;</span><strong><span style="font-family:Arial;font-size:15px;color:rgb(31,31,31);">%CPU:</span></strong><span style="font-family:Arial;font-size:15px;color:rgb(31,31,31);">&nbsp;Valores cercanos al 100% en un solo PID indican tareas de c&aacute;lculo intensivas o bucles ineficientes.</span></li>
+    <li><span style="font-family:Arial;font-size:15px;color:rgb(0,0,0);">●&nbsp;</span><strong><span style="font-family:Arial;font-size:15px;color:rgb(31,31,31);">%MEM:</span></strong><span style="font-family:Arial;font-size:15px;color:rgb(31,31,31);">&nbsp;El incremento lineal sugiere fugas de memoria (</span><em><span style="font-family:Arial;font-size:15px;color:rgb(31,31,31);">memory leaks</span></em><span style="font-family:Arial;font-size:15px;color:rgb(31,31,31);">).</span></li>
+</ul>
+<h3 style="margin-top:6,0000pt;margin-bottom:6,0000pt;line-height:114%;"><strong><span style="font-family:Arial;color:rgb(31,31,31);font-weight:bold;font-size:19px;">2. Correlaci&oacute;n de Logs</span></strong></h3>
+<p style="margin-bottom:12,0000pt;padding:0pt 0pt 0pt 0pt ;line-height:114%;"><span style="font-family:Arial;color:rgb(31,31,31);font-size:15px;">Identificado un PID con comportamiento an&oacute;malo, se debe realizar una b&uacute;squeda cruzada en los&nbsp;</span><em><span style="font-family:Arial;color:rgb(31,31,31);font-style:italic;font-size:15px;">Live Logs</span></em><span style="font-family:Arial;color:rgb(31,31,31);font-size:15px;">&nbsp;para identificar la acci&oacute;n espec&iacute;fica (ej. reporte, importaci&oacute;n) y el usuario que origin&oacute; la carga.</span></p>
+<h2 style="margin-top:0,0000pt;margin-bottom:6,0000pt;line-height:114%;"><strong><span style="font-family:Arial;color:rgb(31,31,31);font-weight:bold;font-size:24px;">IV. EST&Aacute;NDARES DE DESARROLLO Y GESTI&Oacute;N DE ESTADO</span></strong></h2>
+<p style="margin-bottom:12,0000pt;padding:0pt 0pt 0pt 0pt ;line-height:114%;"><span style="font-family:Arial;color:rgb(31,31,31);font-size:15px;">Para asegurar la estabilidad en arquitecturas multiproceso, el c&oacute;digo debe seguir el principio de&nbsp;</span><strong><span style="font-family:Arial;color:rgb(31,31,31);font-weight:bold;font-size:15px;">independencia de estado (Stateless)</span></strong><span style="font-family:Arial;color:rgb(31,31,31);font-size:15px;">.</span></p>
+<h3 style="margin-top:0,0000pt;margin-bottom:6,0000pt;line-height:114%;"><strong><span style="font-family:Arial;color:rgb(31,31,31);font-weight:bold;font-size:19px;">Matriz de Est&aacute;ndares de Implementaci&oacute;n</span></strong></h3>
+<table style="border-collapse: collapse;border: none;width: 936px;">
+    <tbody>
+        <tr>
+            <td style="background: rgb(248, 250, 253);vertical-align: top;">
+                <p style="margin-top:6,0000pt;margin-bottom:6,0000pt;line-height:114%;"><strong><span style="font-family:Arial;color:rgb(31,31,31);font-weight:bold;font-size:15px;">Aspecto T&eacute;cnico</span></strong></p>
+            </td>
+            <td style="border-left: none;background: rgb(248, 250, 253);vertical-align: top;">
+                <p style="margin-top:6,0000pt;margin-bottom:6,0000pt;line-height:114%;"><strong><span style="font-family:Arial;color:rgb(31,31,31);font-weight:bold;font-size:15px;">Protocolo Recomendado (Acierto)</span></strong></p>
+            </td>
+            <td style="border-left: none;background: rgb(248, 250, 253);vertical-align: top;">
+                <p style="margin-top:6,0000pt;margin-bottom:6,0000pt;line-height:114%;"><strong><span style="font-family:Arial;color:rgb(31,31,31);font-weight:bold;font-size:15px;">Pr&aacute;ctica de Riesgo (Antipatr&oacute;n)</span></strong></p>
+            </td>
+            <td style="border-left: none;background: rgb(248, 250, 253);vertical-align: top;">
+                <p style="margin-top:6,0000pt;margin-bottom:6,0000pt;line-height:114%;"><strong><span style="font-family:Arial;color:rgb(31,31,31);font-weight:bold;font-size:15px;">Fundamento de Arquitectura</span></strong></p>
+            </td>
+        </tr>
+        <tr>
+            <td style="border-top: none;background: rgb(248, 250, 253);vertical-align: top;">
+                <p style="line-height:114%;"><strong><span style="font-family:Arial;color:rgb(31,31,31);font-weight:bold;font-size:15px;">Persistencia de Datos</span></strong></p>
+            </td>
+            <td style="border-left: none;border-top: none;background: rgb(248, 250, 253);vertical-align: top;">
+                <p style="line-height:114%;"><span style="font-family:Arial;color:rgb(31,31,31);font-size:15px;">Uso de self.env.context o Base de Datos.</span></p>
+            </td>
+            <td style="border-left: none;border-top: none;background: rgb(248, 250, 253);vertical-align: top;">
+                <p style="line-height:114%;"><span style="font-family:Arial;color:rgb(31,31,31);font-size:15px;">Uso de variables globales o de clase (global var).</span></p>
+            </td>
+            <td style="border-left: none;border-top: none;background: rgb(248, 250, 253);vertical-align: top;">
+                <p style="line-height:114%;"><strong><span style="font-family:Arial;color:rgb(31,31,31);font-weight:bold;font-size:15px;">Aislamiento:</span></strong><span style="font-family:Arial;color:rgb(31,31,31);font-size:15px;">&nbsp;Los workers no comparten memoria RAM. Los datos locales no son visibles entre procesos.</span></p>
+            </td>
+        </tr>
+        <tr>
+            <td style="border-top: none;background: rgb(248, 250, 253);vertical-align: top;">
+                <p style="line-height:114%;"><strong><span style="font-family:Arial;color:rgb(31,31,31);font-weight:bold;font-size:15px;">Gesti&oacute;n de Archivos</span></strong></p>
+            </td>
+            <td style="border-left: none;border-top: none;background: rgb(248, 250, 253);vertical-align: top;">
+                <p style="line-height:114%;"><span style="font-family:Arial;color:rgb(31,31,31);font-size:15px;">Almacenamiento en ir.attachment (Filestore).</span></p>
+            </td>
+            <td style="border-left: none;border-top: none;background: rgb(248, 250, 253);vertical-align: top;">
+                <p style="line-height:114%;"><span style="font-family:Arial;color:rgb(31,31,31);font-size:15px;">Almacenamiento en carpetas locales (/tmp).</span></p>
+            </td>
+            <td style="border-left: none;border-top: none;background: rgb(248, 250, 253);vertical-align: top;">
+                <p style="line-height:114%;"><strong><span style="font-family:Arial;color:rgb(31,31,31);font-weight:bold;font-size:15px;">Efimeridad:</span></strong><span style="font-family:Arial;color:rgb(31,31,31);font-size:15px;">&nbsp;Los archivos locales desaparecen si el Master reinicia el proceso o se escala el contenedor.</span></p>
+            </td>
+        </tr>
+        <tr>
+            <td style="border-top: none;background: rgb(248, 250, 253);vertical-align: top;">
+                <p style="line-height:114%;"><strong><span style="font-family:Arial;color:rgb(31,31,31);font-weight:bold;font-size:15px;">Cargas de Trabajo</span></strong></p>
+            </td>
+            <td style="border-left: none;border-top: none;background: rgb(248, 250, 253);vertical-align: top;">
+                <p style="line-height:114%;"><span style="font-family:Arial;color:rgb(31,31,31);font-size:15px;">Delegaci&oacute;n a Scheduled Actions o Queue Jobs.</span></p>
+            </td>
+            <td style="border-left: none;border-top: none;background: rgb(248, 250, 253);vertical-align: top;">
+                <p style="line-height:114%;"><span style="font-family:Arial;color:rgb(31,31,31);font-size:15px;">Ejecuci&oacute;n de procesos de +60s en hilos HTTP.</span></p>
+            </td>
+            <td style="border-left: none;border-top: none;background: rgb(248, 250, 253);vertical-align: top;">
+                <p style="line-height:114%;"><strong><span style="font-family:Arial;color:rgb(31,31,31);font-weight:bold;font-size:15px;">Timeout:</span></strong><span style="font-family:Arial;color:rgb(31,31,31);font-size:15px;">&nbsp;Las peticiones HTTP tienen l&iacute;mites estrictos; superar el tiempo resulta en la terminaci&oacute;n del proceso.</span></p>
+            </td>
+        </tr>
+        <tr>
+            <td style="border-top: none;background: rgb(248, 250, 253);vertical-align: top;">
+                <p style="line-height:114%;"><strong><span style="font-family:Arial;color:rgb(31,31,31);font-weight:bold;font-size:15px;">Registro de Eventos</span></strong></p>
+            </td>
+            <td style="border-left: none;border-top: none;background: rgb(248, 250, 253);vertical-align: top;">
+                <p style="line-height:114%;"><span style="font-family:Arial;color:rgb(31,31,31);font-size:15px;">Uso de _logger.info() con IDs de registros.</span></p>
+            </td>
+            <td style="border-left: none;border-top: none;background: rgb(248, 250, 253);vertical-align: top;">
+                <p style="line-height:114%;"><span style="font-family:Arial;color:rgb(31,31,31);font-size:15px;">Uso de print() o logs sin contexto t&eacute;cnico.</span></p>
+            </td>
+            <td style="border-left: none;border-top: none;background: rgb(248, 250, 253);vertical-align: top;">
+                <p style="line-height:114%;"><strong><span style="font-family:Arial;color:rgb(31,31,31);font-weight:bold;font-size:15px;">Trazabilidad:</span></strong><span style="font-family:Arial;color:rgb(31,31,31);font-size:15px;">&nbsp;Los logs estructurados permiten correlacionar el PID con la transacci&oacute;n en auditor&iacute;as.</span></p>
+            </td>
+        </tr>
+    </tbody>
+</table>
+<p style="margin-right:30,0000pt;margin-left:30,0000pt;padding:0pt 0pt 0pt 0pt ;line-height:114%;"><span style="font-family:Arial;color:rgb(31,31,31);font-size:15px;">Nota T&eacute;cnica sobre el Aislamiento:</span></p>
+<p style="margin-right:30,0000pt;margin-left:30,0000pt;padding:0pt 0pt 0pt 0pt ;line-height:114%;"><span style="font-family:Arial;color:rgb(31,31,31);font-size:15px;">Piense en cada worker como una burbuja aislada. Si usted escribe una nota en la pared interior de la &quot;Burbuja A&quot; (Variable Global), el ocupante de la &quot;Burbuja B&quot; no podr&aacute; leerla. Para compartir informaci&oacute;n, ambos deben escribir en un tablero com&uacute;n fuera de las burbujas (Base de Datos).</span></p>
+<h2 style="margin-top:12,0000pt;margin-bottom:6,0000pt;line-height:114%;"><strong><span style="font-family:Arial;color:rgb(31,31,31);font-weight:bold;font-size:24px;">V. MATRIZ DE RIESGOS Y L&Iacute;MITES DE SEGURIDAD</span></strong></h2>
+<p style="margin-bottom:12,0000pt;padding:0pt 0pt 0pt 0pt ;line-height:114%;"><span style="font-family:Arial;color:rgb(31,31,31);font-size:15px;">Odoo.sh implementa mecanismos de autoprotecci&oacute;n para evitar el colapso del ecosistema.</span></p>
+<h3 style="margin-top:0,0000pt;margin-bottom:6,0000pt;line-height:114%;"><strong><span style="font-family:Arial;color:rgb(31,31,31);font-weight:bold;font-size:19px;">1. Limit Memory Soft (Reciclaje de Proceso)</span></strong></h3>
+<p style="margin-bottom:12,0000pt;padding:0pt 0pt 0pt 0pt ;line-height:114%;"><span style="font-family:Arial;color:rgb(31,31,31);font-size:15px;">Umbral de advertencia. Al alcanzarlo, el sistema permite finalizar la transacci&oacute;n actual y, posteriormente, el Master reinicia el worker para liberar recursos. Es un proceso preventivo y transparente.</span></p>
+<h3 style="margin-top:0,0000pt;margin-bottom:6,0000pt;line-height:114%;"><strong><span style="font-family:Arial;color:rgb(31,31,31);font-weight:bold;font-size:19px;">2. Limit Memory Hard (Out of Memory - OOM)</span></strong></h3>
+<p style="margin-bottom:6,0000pt;padding:0pt 0pt 0pt 0pt ;line-height:114%;"><span style="font-family:Arial;color:rgb(31,31,31);font-size:15px;">Umbral cr&iacute;tico. Si un worker intenta exceder esta capacidad durante una ejecuci&oacute;n, el sistema operativo lo termina inmediatamente (</span><strong><span style="font-family:Arial;color:rgb(31,31,31);font-weight:bold;font-size:15px;">Kill -9</span></strong><span style="font-family:Arial;color:rgb(31,31,31);font-size:15px;">).</span></p>
+<ul>
+    <li><span style="font-family:Arial;font-size:15px;color:rgb(0,0,0);">●&nbsp;</span><strong><span style="font-family:Arial;font-size:15px;color:rgb(31,31,31);">Impacto:</span></strong><span style="font-family:Arial;font-size:15px;color:rgb(31,31,31);">&nbsp;Interrupci&oacute;n abrupta de la transacci&oacute;n y error de conexi&oacute;n para el usuario.</span></li>
+    <li><span style="font-family:Arial;font-size:15px;color:rgb(0,0,0);">●&nbsp;</span><strong><span style="font-family:Arial;font-size:15px;color:rgb(31,31,31);">Causas comunes:</span></strong><span style="font-family:Arial;font-size:15px;color:rgb(31,31,31);">&nbsp;Consultas search() masivas sin paginaci&oacute;n, recursividad infinita o procesamiento de binarios pesados directamente en RAM.</span></li>
+</ul>
+<h2 style="margin-top:6,0000pt;margin-bottom:6,0000pt;line-height:114%;"><strong><span style="font-family:Arial;color:rgb(31,31,31);font-weight:bold;font-size:24px;">VI. CONCLUSI&Oacute;N</span></strong></h2>
+<p style="margin-bottom:12,0000pt;padding:0pt 0pt 0pt 0pt ;line-height:114%;"><span style="font-family:Arial;color:rgb(31,31,31);font-size:15px;">El cumplimiento de estos est&aacute;ndares es fundamental para mantener la integridad de las instancias. Se recomienda la auditor&iacute;a de c&oacute;digo peri&oacute;dica para asegurar la adherencia a estos protocolos de ingenier&iacute;a.</span></p>
+<p style="margin-bottom:12,0000pt;border-bottom:1,0000pt solid rgb(0,0,0);padding:0pt 0pt 1pt 0pt ;line-height:114%;"><em><span style="font-family:Arial;color:rgb(31,31,31);font-style:italic;font-size:15px;">&nbsp;</span></em></p>
+<p style="margin-bottom:12,0000pt;padding:0pt 0pt 0pt 0pt ;line-height:114%;"><em><span style="font-family:Arial;color:rgb(31,31,31);font-style:italic;font-size:15px;">Evaluando QUEUE JOB</span></em></p>
+<p style="margin-bottom:12,0000pt;padding:0pt 0pt 0pt 0pt ;line-height:114%;"><em><span style="font-family:Arial;color:rgb(31,31,31);font-style:italic;font-size:15px;">&nbsp;</span></em></p>
+<h2 style="margin-top:14,9500pt;margin-bottom:14,9500pt;"><strong><span style="font-family:Arial;font-weight:bold;font-size:24px;">1. An&aacute;lisis del M&oacute;dulo OCA queue_job</span></strong></h2>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;"><span style="font-family:Arial;font-size:15px;">El m&oacute;dulo queue_job&nbsp;de la OCA (OCA/queue) es un sistema robusto de cola de trabajos que permite la ejecuci&oacute;n as&iacute;ncrona de m&eacute;todos en Odoo.</span></p>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;"><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">Funcionalidades Clave:</span></strong></p>
+<ul>
+    <li><span style="font-family:Arial;font-size:15px;">1.&nbsp;</span><strong><span style="font-family:Arial;font-size:15px;">Ejecuci&oacute;n As&iacute;ncrona:</span></strong><span style="font-family:Arial;font-size:15px;">&nbsp;Permite que las operaciones largas (como importaciones masivas, c&aacute;lculos complejos o integraciones) se ejecuten en segundo plano, liberando al usuario para que siga trabajando sin experimentar&nbsp;</span><em><span style="font-family:Arial;font-size:15px;">timeouts</span></em><span style="font-family:Arial;font-size:15px;">&nbsp;HTTP.</span></li>
+    <li><span style="font-family:Arial;font-size:15px;">2.&nbsp;</span><strong><span style="font-family:Arial;font-size:15px;">Transacciones Independientes:</span></strong><span style="font-family:Arial;font-size:15px;">&nbsp;Cada trabajo se ejecuta en su propia transacci&oacute;n de base de datos, lo que significa que el fallo de un trabajo no afecta a otros trabajos ni a la transacci&oacute;n principal que lo encol&oacute;.</span></li>
+    <li><span style="font-family:Arial;font-size:15px;">3.&nbsp;</span><strong><span style="font-family:Arial;font-size:15px;">Persistencia y Reintentos:</span></strong><span style="font-family:Arial;font-size:15px;">&nbsp;Los trabajos se almacenan en la tabla queue_job de la base de datos, permitiendo seguimiento, priorizaci&oacute;n, configuraci&oacute;n de canales y reintentos autom&aacute;ticos en caso de fallo.</span></li>
+</ul>
+<p><span style="font-family:Arial;font-size:15px;">&nbsp;</span></p>
+<h2 style="margin-top:14,9500pt;margin-bottom:14,9500pt;"><strong><span style="font-family:Arial;font-weight:bold;font-size:24px;">2. El Mecanismo del Job Runner y por qu&eacute; falla en Odoo.sh</span></strong></h2>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;"><span style="font-family:Arial;font-size:15px;">El Job Runner es el coraz&oacute;n del m&oacute;dulo, responsable de detectar nuevos trabajos y enviarlos para su ejecuci&oacute;n.</span></p>
+<h3 style="margin-top:14,0500pt;margin-bottom:14,0500pt;"><strong><span style="font-family:Arial;font-weight:bold;font-size:19px;">Funcionamiento Est&aacute;ndar (Arquitectura T&iacute;pica)</span></strong></h3>
+<ul>
+    <li><span style="font-family:Arial;font-size:15px;">1.&nbsp;</span><strong><span style="font-family:Arial;font-size:15px;">Creaci&oacute;n del Job:</span></strong><span style="font-family:Arial;font-size:15px;">&nbsp;Un m&eacute;todo de Odoo es llamado usando .with_delay(). Esto crea un registro en la tabla queue_job con estado pending o enqueued.</span></li>
+    <li><span style="font-family:Arial;font-size:15px;">2.&nbsp;</span><strong><span style="font-family:Arial;font-size:15px;">Notificaci&oacute;n PostgreSQL:</span></strong><span style="font-family:Arial;font-size:15px;">&nbsp;La base de datos PostgreSQL env&iacute;a un mensaje NOTIFY cuando la tabla queue_job se modifica.</span></li>
+    <li><span style="font-family:Arial;font-size:15px;">3.&nbsp;</span><strong><span style="font-family:Arial;font-size:15px;">Activaci&oacute;n del Runner:</span></strong><span style="font-family:Arial;font-size:15px;">&nbsp;El&nbsp;</span><strong><span style="font-family:Arial;font-size:15px;">Job Runner</span></strong><span style="font-family:Arial;font-size:15px;">&nbsp;(un hilo o proceso dedicado dentro del Odoo Worker) est&aacute; escuchando esta notificaci&oacute;n.</span></li>
+    <li><span style="font-family:Arial;font-size:15px;">4.&nbsp;</span><strong><span style="font-family:Arial;font-size:15px;">Ejecuci&oacute;n HTTP:</span></strong><span style="font-family:Arial;font-size:15px;">&nbsp;El Job Runner&nbsp;</span><strong><span style="font-family:Arial;font-size:15px;">no ejecuta el trabajo directamente</span></strong><span style="font-family:Arial;font-size:15px;">. En su lugar, realiza una llamada HTTP an&oacute;nima (por ejemplo, a /queue_job/runjob?job_uuid=...) al servidor Odoo (a un&nbsp;</span><strong><span style="font-family:Arial;font-size:15px;">HTTP Worker</span></strong><span style="font-family:Arial;font-size:15px;">&nbsp;activo) para que este ejecute el m&eacute;todo aplazado.</span></li>
+</ul>
+<h3 style="margin-top:14,0500pt;margin-bottom:14,0500pt;"><strong><span style="font-family:Arial;font-weight:bold;font-size:19px;">Restricci&oacute;n y Soluci&oacute;n para Odoo.sh</span></strong></h3>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;"><span style="font-family:Arial;font-size:15px;">El problema en Odoo.sh (que causa que los mensajes queden pending) es que el Job Runner est&aacute;ndar asume que siempre hay un&nbsp;</span><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">HTTP Worker</span></strong><span style="font-family:Arial;font-size:15px;">&nbsp;activo y disponible para recibir la llamada HTTP.</span></p>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;"><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">En Odoo.sh:</span></strong></p>
+<ul>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><strong><span style="font-family:Arial;font-size:15px;">HTTP Workers:</span></strong><span style="font-family:Arial;font-size:15px;">&nbsp;Si no hay tr&aacute;fico, estos workers pueden &quot;dormir&quot; para ahorrar recursos. Si el Job Runner est&aacute; activo, pero el HTTP Worker que deber&iacute;a ejecutar la tarea est&aacute; inactivo o la llamada HTTP falla por configuraci&oacute;n, los trabajos se acumulan en estado pending.</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><strong><span style="font-family:Arial;font-size:15px;">Cron Workers:</span></strong><span style="font-family:Arial;font-size:15px;">&nbsp;Odoo.sh utiliza un worker separado para las acciones planificadas (ir.cron), el cual se activa por intervalos, ejecuta las tareas pendientes y luego se cierra.</span></li>
+</ul>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;"><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">La Soluci&oacute;n OCA para Odoo.sh:</span></strong></p>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;"><span style="font-family:Arial;font-size:15px;">Para entornos con estas restricciones, la OCA mantiene un m&oacute;dulo alternativo llamado&nbsp;</span><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">queue_job_cron_jobrunner</span></strong><span style="font-family:Arial;font-size:15px;">.</span></p>
+<ul>
+    <li><span style="font-family:Arial;font-size:15px;">1.&nbsp;</span><strong><span style="font-family:Arial;font-size:15px;">Implementaci&oacute;n:</span></strong><span style="font-family:Arial;font-size:15px;">&nbsp;Este m&oacute;dulo reemplaza la dependencia del Job Runner est&aacute;ndar al&nbsp;</span><em><span style="font-family:Arial;font-size:15px;">worker</span></em><span style="font-family:Arial;font-size:15px;">&nbsp;HTTP.</span></li>
+    <li><span style="font-family:Arial;font-size:15px;">2.&nbsp;</span><strong><span style="font-family:Arial;font-size:15px;">Activaci&oacute;n:</span></strong><span style="font-family:Arial;font-size:15px;">&nbsp;Implementa un&nbsp;</span><strong><span style="font-family:Arial;font-size:15px;">ir.cron</span></strong><span style="font-family:Arial;font-size:15px;">&nbsp;(Acci&oacute;n Planificada) que, al activarse, fuerza la ejecuci&oacute;n de los trabajos pendientes.</span></li>
+    <li><span style="font-family:Arial;font-size:15px;">3.&nbsp;</span><strong><span style="font-family:Arial;font-size:15px;">Ejecuci&oacute;n:</span></strong><span style="font-family:Arial;font-size:15px;">&nbsp;Los trabajos se procesan dentro de los hilos del&nbsp;</span><strong><span style="font-family:Arial;font-size:15px;">Cron Worker</span></strong><span style="font-family:Arial;font-size:15px;">&nbsp;de Odoo.sh, garantizando que se ejecuten incluso si no hay tr&aacute;fico HTTP, resolviendo el problema de los trabajos que quedan pending.</span></li>
+</ul>
+<p style="margin-bottom:12,0000pt;padding:0pt 0pt 0pt 0pt ;line-height:114%;"><em><span style="font-family:Arial;color:rgb(31,31,31);font-style:italic;font-size:15px;">&nbsp;</span></em></p>
+<h1 style="margin-top:16,1000pt;margin-bottom:16,1000pt;"><strong><span style="font-family:Arial;font-weight:bold;font-size:32px;">1. Lo primero: &iquest;por qu&eacute; tus jobs quedan en </span></strong><strong><em><span style="font-family:Arial;font-weight:bold;font-style:italic;font-size:32px;">pending</span></em></strong><strong><span style="font-family:Arial;font-weight:bold;font-size:32px;"> en Odoo.sh?</span></strong></h1>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;"><span style="font-family:Arial;font-size:15px;">En&nbsp;</span><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">Odoo.sh NO puedes ejecutar workers manuales</span></strong><span style="font-family:Arial;font-size:15px;">, ni lanzar comandos como:</span></p>
+<p style="margin-top:0,0000pt;margin-bottom:0,0000pt;"><span style="font-family:Arial;font-size:15px;">./odoo-bin queue_job<br></span></p>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;"><span style="font-family:Arial;font-size:15px;">El procesamiento de trabajos&nbsp;</span><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">solo funciona si lo tiene activado el m&oacute;dulo </span></strong><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">queue_job</span></strong><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;"> y el cron interno se est&aacute; ejecutando</span></strong><span style="font-family:Arial;font-size:15px;">.</span></p>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;"><span style="font-family:Arial;font-size:15px;">En otras palabras:</span></p>
+<h3 style="margin-top:14,0500pt;margin-bottom:14,0500pt;"><strong><span style="font-family:Arial;font-weight:bold;font-size:19px;">✔️ En Odoo.sh el procesamiento se activa solo as&iacute;:</span></strong></h3>
+<ul>
+    <li><span style="font-family:Arial;font-size:15px;">1. Instalas el m&oacute;dulo&nbsp;</span><strong><span style="font-family:Arial;font-size:15px;">queue_job</span></strong><span style="font-family:Arial;font-size:15px;">&nbsp;de OCA.</span></li>
+    <li><span style="font-family:Arial;font-size:15px;">2. Activas el cron&nbsp;</span><strong><span style="font-family:Arial;font-size:15px;">&quot;Jobs runner&quot;</span></strong><span style="font-family:Arial;font-size:15px;">.</span></li>
+    <li><span style="font-family:Arial;font-size:15px;">3. El cron es quien levanta los jobs, porque&nbsp;</span><strong><span style="font-family:Arial;font-size:15px;">NO existe worker dedicado</span></strong><span style="font-family:Arial;font-size:15px;">&nbsp;en Odoo.sh.</span></li>
+    <li><span style="font-family:Arial;font-size:15px;">4.   &nbsp;</span><em><span style="font-family:Arial;font-size:15px;">El cron se llama:</span></em></li>
+    <li><span style="font-family:Arial;font-size:15px;">5.&nbsp;Queue Jobs Runner<br></span></li>
+    <li><span style="font-family:Arial;font-size:15px;">6.&nbsp;Debe estar:</span></li>
+    <li><span style="font-family:Arial;font-size:15px;">7.&nbsp;</span><strong><span style="font-family:Arial;font-size:15px;">activo</span></strong></li>
+    <li><span style="font-family:Arial;font-size:15px;">8.&nbsp;</span><strong><span style="font-family:Arial;font-size:15px;">pr&oacute;xima ejecuci&oacute;n</span></strong><span style="font-family:Arial;font-size:15px;">&nbsp;dentro de pocos minutos</span></li>
+    <li><span style="font-family:Arial;font-size:15px;">9.&nbsp;</span><strong><span style="font-family:Arial;font-size:15px;">sin errores</span></strong></li>
+</ul>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;"><span style="font-family:Arial;font-size:15px;">&nbsp;</span></p>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">&nbsp;</span></p>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">&nbsp;</span></p>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">&nbsp;</span></p>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">&nbsp;</span></p>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">&nbsp;</span></p>
+<h1 style="margin-top:16,1000pt;margin-bottom:16,1000pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:32px;">   Visi&oacute;n general (modelo mental correcto)</span></strong></h1>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">En&nbsp;</span><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">odoo.sh NO existe</span></strong><span style="font-family:Arial;font-size:15px;">:</span></p>
+<ul>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Workers dedicados</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Procesos en background reales</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">&ldquo;Listeners&rdquo; permanentes</span></li>
+</ul>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">  &nbsp;</span><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">TODO gira alrededor de CRON + transacciones HTTP/cron normales</span></strong></p>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">&nbsp;</span></p>
+<h1 style="margin-top:16,1000pt;margin-bottom:16,1000pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:32px;">   Los dos m&oacute;dulos y su rol</span></strong></h1>
+<h2 style="margin-top:14,9500pt;margin-bottom:14,9500pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:24px;">1️⃣ </span></strong><strong><span style="font-family:Arial;font-weight:bold;font-size:24px;">queue_job</span></strong><strong><span style="font-family:Arial;font-weight:bold;font-size:24px;"> &ndash; El cerebro (modelo de datos)</span></strong></h2>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">queue_job&nbsp;</span><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">NO ejecuta nada</span></strong><span style="font-family:Arial;font-size:15px;">.</span></p>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">Lo que hace es:</span></p>
+<ul>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Define el modelo queue.job</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Define estados (pending, started, done, failed)</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Provee:</span>
+        <ul>
+            <li><span style="font-family:'Courier New';font-size:15px;">o&nbsp;</span><span style="font-family:Arial;font-size:15px;">with_delay()</span></li>
+            <li><span style="font-family:'Courier New';font-size:15px;">o&nbsp;</span><span style="font-family:Arial;font-size:15px;">Serializaci&oacute;n del m&eacute;todo</span></li>
+            <li><span style="font-family:'Courier New';font-size:15px;">o&nbsp;</span><span style="font-family:Arial;font-size:15px;">Manejo de errores</span></li>
+            <li><span style="font-family:'Courier New';font-size:15px;">o&nbsp;</span><span style="font-family:Arial;font-size:15px;">Reintentos</span></li>
+            <li><span style="font-family:'Courier New';font-size:15px;">o&nbsp;</span><span style="font-family:Arial;font-size:15px;">Canales</span></li>
+        </ul>
+    </li>
+</ul>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">   Cuando t&uacute; haces:</span></p>
+<p style="margin-top:0,0000pt;margin-bottom:0,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">self.with_delay().job_dummy()<br></span></p>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">NO se ejecuta el m&eacute;todo</span></strong><span style="font-family:Arial;font-size:15px;">.</span></p>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">   Se crea un registro en queue.job&nbsp;con:</span></p>
+<ul>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Nombre del m&eacute;todo</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Modelo</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Argumentos</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Estado = pending</span></li>
+</ul>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">Nada m&aacute;s.</span></p>
+<h2 style="margin-top:14,9500pt;margin-bottom:14,9500pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:24px;">2️⃣ </span></strong><strong><span style="font-family:Arial;font-weight:bold;font-size:24px;">queue_job_cron_jobrunner</span></strong><strong><span style="font-family:Arial;font-weight:bold;font-size:24px;"> &ndash; El &ldquo;motor&rdquo; falso</span></strong></h2>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">Este m&oacute;dulo es&nbsp;</span><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">una adaptaci&oacute;n para entornos como odoo.sh</span></strong><span style="font-family:Arial;font-size:15px;">.</span></p>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">Lo que agrega es:</span></p>
+<ul>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Un ir.cron&nbsp;especial (Jobrunner)</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Ese cron&nbsp;</span><strong><span style="font-family:Arial;font-size:15px;">simula</span></strong><span style="font-family:Arial;font-size:15px;">&nbsp;un worker</span></li>
+</ul>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">No escucha,&nbsp;</span><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">despierta</span></strong><span style="font-family:Arial;font-size:15px;">.</span></p>
+<p style="margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">&nbsp;</span></p>
+<h1 style="margin-top:16,1000pt;margin-bottom:16,1000pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:32px;">⏱️ &iquest;Cada cu&aacute;nto se ejecuta el Jobrunner?</span></strong></h1>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">Depende de la configuraci&oacute;n del cron:</span></p>
+<ul>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">T&iacute;picamente:</span>
+        <ul>
+            <li><span style="font-family:'Courier New';font-size:15px;">o&nbsp;</span><span style="font-family:Arial;font-size:15px;">Cada&nbsp;</span><strong><span style="font-family:Arial;font-size:15px;">1 minuto</span></strong></li>
+            <li><span style="font-family:'Courier New';font-size:15px;">o&nbsp;</span><span style="font-family:Arial;font-size:15px;">A veces cada&nbsp;</span><strong><span style="font-family:Arial;font-size:15px;">2 o 5 minutos</span></strong></li>
+        </ul>
+    </li>
+</ul>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">En odoo.sh:</span></p>
+<ul>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">❌ No es exacto</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">❌ Puede retrasarse</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">❌ Puede saltarse ejecuciones bajo carga</span></li>
+</ul>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">  &nbsp;</span><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">No hay garant&iacute;a de tiempo real</span></strong></p>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">&nbsp;</span></strong></p>
+<p style="margin-top:16,1000pt;margin-bottom:16,1000pt;line-height:114%;"><strong><span style="font-family:Arial;line-height:114%;font-weight:bold;font-size:32px;">1️⃣ Qu&eacute; es EXACTAMENTE &ldquo;especial&rdquo; en el cron del jobrunner</span></strong></p>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">Un ir.cron&nbsp;normal en Odoo:</span></p>
+<ul>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Ejecuta&nbsp;</span><strong><span style="font-family:Arial;font-size:15px;">una funci&oacute;n espec&iacute;fica</span></strong></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">No sabe nada de:</span>
+        <ul>
+            <li><span style="font-family:'Courier New';font-size:15px;">o&nbsp;</span><span style="font-family:Arial;font-size:15px;">Jobs pendientes</span></li>
+            <li><span style="font-family:'Courier New';font-size:15px;">o&nbsp;</span><span style="font-family:Arial;font-size:15px;">Estados</span></li>
+            <li><span style="font-family:'Courier New';font-size:15px;">o&nbsp;</span><span style="font-family:Arial;font-size:15px;">Concurrencia</span></li>
+            <li><span style="font-family:'Courier New';font-size:15px;">o&nbsp;</span><span style="font-family:Arial;font-size:15px;">Reintentos</span></li>
+        </ul>
+    </li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">No coordina con otros crons</span></li>
+</ul>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">   Es &ldquo;tonto&rdquo;:&nbsp;</span><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">ejecuta y ya</span></strong><span style="font-family:Arial;font-size:15px;">.</span></p>
+<p style="margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">&nbsp;</span></p>
+<h2 style="margin-top:14,9500pt;margin-bottom:14,9500pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:24px;">El cron del </span></strong><strong><span style="font-family:Arial;font-weight:bold;font-size:24px;">queue_job_cron_jobrunner</span></strong><strong><span style="font-family:Arial;font-weight:bold;font-size:24px;"> es distinto porque:</span></strong></h2>
+<h3 style="margin-top:14,0500pt;margin-bottom:14,0500pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:19px;">✔ No ejecuta l&oacute;gica de negocio</span></strong></h3>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">Ejecuta&nbsp;</span><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">un motor gen&eacute;rico</span></strong><span style="font-family:Arial;font-size:15px;">:</span></p>
+<p style="margin-top:0,0000pt;margin-bottom:0,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">&ldquo;Busca jobs pendientes &rarr; decide cu&aacute;les ejecutar &rarr; los ejecuta&rdquo;<br></span></p>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">No sabe&nbsp;</span><em><span style="font-family:Arial;font-style:italic;font-size:15px;">qu&eacute;</span></em><span style="font-family:Arial;font-size:15px;">&nbsp;hacen los jobs, solo&nbsp;</span><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">c&oacute;mo administrarlos</span></strong><span style="font-family:Arial;font-size:15px;">.</span></p>
+<p style="margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">&nbsp;</span></p>
+<h1 style="margin-top:16,1000pt;margin-bottom:16,1000pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:32px;">2️⃣ C&oacute;mo t&eacute;cnicamente simula un worker</span></strong></h1>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">Voy a describir el flujo&nbsp;</span><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">real</span></strong><span style="font-family:Arial;font-size:15px;">, basado en el c&oacute;digo de OCA (sin adornos).</span></p>
+<p style="margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">&nbsp;</span></p>
+<h2 style="margin-top:14,9500pt;margin-bottom:14,9500pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:24px;">   2.1 El worker real (para comparar)</span></strong></h2>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">En un entorno completo (no odoo.sh):</span></p>
+<ul>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Proceso separado (daemon)</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Loop infinito</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Bloqueante</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Siempre &ldquo;escuchando&rdquo;</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Puede:</span>
+        <ul>
+            <li><span style="font-family:'Courier New';font-size:15px;">o&nbsp;</span><span style="font-family:Arial;font-size:15px;">Ejecutar m&uacute;ltiples jobs</span></li>
+            <li><span style="font-family:'Courier New';font-size:15px;">o&nbsp;</span><span style="font-family:Arial;font-size:15px;">Ejecutar en paralelo</span></li>
+            <li><span style="font-family:'Courier New';font-size:15px;">o&nbsp;</span><span style="font-family:Arial;font-size:15px;">Dormir y despertar sin costo</span></li>
+        </ul>
+    </li>
+</ul>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">  &nbsp;</span><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">Nada de esto existe en odoo.sh</span></strong><span style="font-family:Arial;font-size:15px;">.</span></p>
+<p style="margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">&nbsp;</span></p>
+<p style="margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">&nbsp;</span></p>
+<p style="margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">&nbsp;</span></p>
+<p style="margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">&nbsp;</span></p>
+<h2 style="margin-top:14,9500pt;margin-bottom:14,9500pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:24px;">   2.2 El &ldquo;worker simulado&rdquo; del jobrunner</span></strong></h2>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">El jobrunner&nbsp;</span><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">no vive</span></strong><span style="font-family:Arial;font-size:15px;">, solo&nbsp;</span><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">aparece</span></strong><span style="font-family:Arial;font-size:15px;">.</span></p>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">Cada ejecuci&oacute;n del cron es:</span></p>
+<p style="margin-top:0,0000pt;margin-bottom:0,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">┌────────────┐<br>│ Cron &nbsp; &nbsp; &nbsp; │<br>│ despierta &nbsp;│<br>└─────┬──────┘<br>&nbsp; &nbsp; &nbsp; &darr;<br>┌────────────────────────────┐<br>│ jobrunner.run() &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; │<br>│ &nbsp;- abre transacci&oacute;n &nbsp; &nbsp; &nbsp; &nbsp; │<br>│ &nbsp;- busca jobs pendientes &nbsp; &nbsp;│<br>│ &nbsp;- bloquea uno &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp;│<br>│ &nbsp;- ejecuta &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp;│<br>│ &nbsp;- commit / rollback &nbsp; &nbsp; &nbsp; &nbsp;│<br>└────────────────────────────┘<br>&nbsp; &nbsp; &nbsp; &darr;<br>┌────────────┐<br>│ Proceso &nbsp; &nbsp;│<br>│ termina &nbsp; &nbsp;│<br>└────────────┘<br></span></p>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">  &nbsp;</span><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">Ese ciclo es la &ldquo;simulaci&oacute;n&rdquo; del worker</span></strong><span style="font-family:Arial;font-size:15px;">.</span></p>
+<p style="margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">&nbsp;</span></p>
+<h1 style="margin-top:16,1000pt;margin-bottom:16,1000pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:32px;">3️⃣ Qu&eacute; hace internamente el jobrunner (detalle t&eacute;cnico)</span></strong></h1>
+<h3 style="margin-top:14,0500pt;margin-bottom:14,0500pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:19px;">⚠️ Lo siguiente es conceptual, pero fiel al c&oacute;digo OCA.</span></strong></h3>
+<p style="margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">&nbsp;</span></p>
+<h2 style="margin-top:14,9500pt;margin-bottom:14,9500pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:24px;">   Paso 1 &ndash; Selecci&oacute;n de jobs (CR&Iacute;TICO)</span></strong></h2>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">El jobrunner hace algo como:</span></p>
+<p style="margin-top:0,0000pt;margin-bottom:0,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">SELECT id<br>FROM queue_job<br>WHERE state = &apos;pending&apos;<br>ORDER BY priority, date_created<br>FOR UPDATE SKIP LOCKED<br>LIMIT 1;<br></span></p>
+<h3 style="margin-top:14,0500pt;margin-bottom:14,0500pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:19px;">Por qu&eacute; esto es especial</span></strong></h3>
+<ul>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">FOR UPDATE SKIP LOCKED:</span>
+        <ul>
+            <li><span style="font-family:'Courier New';font-size:15px;">o&nbsp;</span><span style="font-family:Arial;font-size:15px;">Evita que dos ejecuciones del cron tomen el mismo job</span></li>
+            <li><span style="font-family:'Courier New';font-size:15px;">o&nbsp;</span><span style="font-family:Arial;font-size:15px;">Simula&nbsp;</span><strong><span style="font-family:Arial;font-size:15px;">exclusi&oacute;n mutua de workers</span></strong></li>
+        </ul>
+    </li>
+</ul>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">   Esto&nbsp;</span><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">NO lo hace un cron normal</span></strong><span style="font-family:Arial;font-size:15px;">.</span></p>
+<p style="margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">&nbsp;</span></p>
+<h2 style="margin-top:14,9500pt;margin-bottom:14,9500pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:24px;">   Paso 2 &ndash; &ldquo;Lock&rdquo; de job</span></strong></h2>
+<ul>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Cambia estado a started</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Guarda date_started</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Commit parcial</span></li>
+</ul>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">Esto asegura que:</span></p>
+<ul>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Si el cron muere</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">El job queda &ldquo;marcado&rdquo;</span></li>
+</ul>
+<p style="margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">&nbsp;</span></p>
+<h2 style="margin-top:14,9500pt;margin-bottom:14,9500pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:24px;">   Paso 3 &ndash; Ejecuci&oacute;n encapsulada</span></strong></h2>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">El job:</span></p>
+<ul>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Se ejecuta dentro de:</span>
+        <ul>
+            <li><span style="font-family:'Courier New';font-size:15px;">o&nbsp;</span><span style="font-family:Arial;font-size:15px;">try / except</span></li>
+            <li><span style="font-family:'Courier New';font-size:15px;">o&nbsp;</span><span style="font-family:Arial;font-size:15px;">Savepoint</span></li>
+        </ul>
+    </li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Maneja:</span>
+        <ul>
+            <li><span style="font-family:'Courier New';font-size:15px;">o&nbsp;</span><span style="font-family:Arial;font-size:15px;">Excepciones</span></li>
+            <li><span style="font-family:'Courier New';font-size:15px;">o&nbsp;</span><span style="font-family:Arial;font-size:15px;">Retry logic</span></li>
+            <li><span style="font-family:'Courier New';font-size:15px;">o&nbsp;</span><span style="font-family:Arial;font-size:15px;">Estados</span></li>
+        </ul>
+    </li>
+</ul>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">Un cron normal:</span></p>
+<ul>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Si falla &rarr; todo falla</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">No hay retry sem&aacute;ntico</span></li>
+</ul>
+<p style="margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">&nbsp;</span></p>
+<h2 style="margin-top:14,9500pt;margin-bottom:14,9500pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:24px;">   Paso 4 &ndash; Finalizaci&oacute;n controlada</span></strong></h2>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">Seg&uacute;n el resultado:</span></p>
+<ul>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">done</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">failed</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">retry</span></li>
+</ul>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">Se guarda:</span></p>
+<ul>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Stacktrace</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Duraci&oacute;n</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Resultado</span></li>
+</ul>
+<p style="margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">&nbsp;</span></p>
+<h1 style="margin-top:16,1000pt;margin-bottom:16,1000pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:32px;">4️⃣ Diferencias CLAVE vs cron normal (tabla honesta)</span></strong></h1>
+<table style="border-collapse: collapse;border: none;width: 685px;">
+    <tbody>
+        <tr>
+            <td style="width:105,0000pt;padding:0,0000pt 5,4000pt 0,0000pt 5,4000pt ;border-left:none;border-right:none;border-top:none;border-bottom:none;">
+                <p style="margin-top:0,0000pt;margin-bottom:0,0000pt;text-align:center;"><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">Aspecto</span></strong></p>
+            </td>
+            <td style="width:81,8000pt;padding:0,0000pt 5,4000pt 0,0000pt 5,4000pt ;border-left:none;border-right:none;border-top:none;border-bottom:none;">
+                <p style="margin-top:0,0000pt;margin-bottom:0,0000pt;text-align:center;"><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">Cron normal</span></strong></p>
+            </td>
+            <td style="width:156,1500pt;padding:0,0000pt 5,4000pt 0,0000pt 5,4000pt ;border-left:none;border-right:none;border-top:none;border-bottom:none;">
+                <p style="margin-top:0,0000pt;margin-bottom:0,0000pt;text-align:center;"><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">queue_job_cron_jobrunner</span></strong></p>
+            </td>
+        </tr>
+        <tr>
+            <td style="width:105,0000pt;padding:0,0000pt 5,4000pt 0,0000pt 5,4000pt ;border-left:none;border-right:none;border-top:none;border-bottom:none;">
+                <p style="margin-top:0,0000pt;margin-bottom:0,0000pt;"><span style="font-family:Arial;font-size:15px;">Estado persistente</span></p>
+            </td>
+            <td style="width:81,8000pt;padding:0,0000pt 5,4000pt 0,0000pt 5,4000pt ;border-left:none;border-right:none;border-top:none;border-bottom:none;">
+                <p style="margin-top:0,0000pt;margin-bottom:0,0000pt;"><span style="font-family:Arial;font-size:15px;">❌</span></p>
+            </td>
+            <td style="width:156,1500pt;padding:0,0000pt 5,4000pt 0,0000pt 5,4000pt ;border-left:none;border-right:none;border-top:none;border-bottom:none;">
+                <p style="margin-top:0,0000pt;margin-bottom:0,0000pt;"><span style="font-family:Arial;font-size:15px;">✅</span></p>
+            </td>
+        </tr>
+        <tr>
+            <td style="width:105,0000pt;padding:0,0000pt 5,4000pt 0,0000pt 5,4000pt ;border-left:none;border-right:none;border-top:none;border-bottom:none;">
+                <p style="margin-top:0,0000pt;margin-bottom:0,0000pt;"><span style="font-family:Arial;font-size:15px;">Locking DB</span></p>
+            </td>
+            <td style="width:81,8000pt;padding:0,0000pt 5,4000pt 0,0000pt 5,4000pt ;border-left:none;border-right:none;border-top:none;border-bottom:none;">
+                <p style="margin-top:0,0000pt;margin-bottom:0,0000pt;"><span style="font-family:Arial;font-size:15px;">❌</span></p>
+            </td>
+            <td style="width:156,1500pt;padding:0,0000pt 5,4000pt 0,0000pt 5,4000pt ;border-left:none;border-right:none;border-top:none;border-bottom:none;">
+                <p style="margin-top:0,0000pt;margin-bottom:0,0000pt;"><span style="font-family:Arial;font-size:15px;">✅</span></p>
+            </td>
+        </tr>
+        <tr>
+            <td style="width:105,0000pt;padding:0,0000pt 5,4000pt 0,0000pt 5,4000pt ;border-left:none;border-right:none;border-top:none;border-bottom:none;">
+                <p style="margin-top:0,0000pt;margin-bottom:0,0000pt;"><span style="font-family:Arial;font-size:15px;">SKIP LOCKED</span></p>
+            </td>
+            <td style="width:81,8000pt;padding:0,0000pt 5,4000pt 0,0000pt 5,4000pt ;border-left:none;border-right:none;border-top:none;border-bottom:none;">
+                <p style="margin-top:0,0000pt;margin-bottom:0,0000pt;"><span style="font-family:Arial;font-size:15px;">❌</span></p>
+            </td>
+            <td style="width:156,1500pt;padding:0,0000pt 5,4000pt 0,0000pt 5,4000pt ;border-left:none;border-right:none;border-top:none;border-bottom:none;">
+                <p style="margin-top:0,0000pt;margin-bottom:0,0000pt;"><span style="font-family:Arial;font-size:15px;">✅</span></p>
+            </td>
+        </tr>
+        <tr>
+            <td style="width:105,0000pt;padding:0,0000pt 5,4000pt 0,0000pt 5,4000pt ;border-left:none;border-right:none;border-top:none;border-bottom:none;">
+                <p style="margin-top:0,0000pt;margin-bottom:0,0000pt;"><span style="font-family:Arial;font-size:15px;">Retry autom&aacute;tico</span></p>
+            </td>
+            <td style="width:81,8000pt;padding:0,0000pt 5,4000pt 0,0000pt 5,4000pt ;border-left:none;border-right:none;border-top:none;border-bottom:none;">
+                <p style="margin-top:0,0000pt;margin-bottom:0,0000pt;"><span style="font-family:Arial;font-size:15px;">❌</span></p>
+            </td>
+            <td style="width:156,1500pt;padding:0,0000pt 5,4000pt 0,0000pt 5,4000pt ;border-left:none;border-right:none;border-top:none;border-bottom:none;">
+                <p style="margin-top:0,0000pt;margin-bottom:0,0000pt;"><span style="font-family:Arial;font-size:15px;">✅</span></p>
+            </td>
+        </tr>
+        <tr>
+            <td style="width:105,0000pt;padding:0,0000pt 5,4000pt 0,0000pt 5,4000pt ;border-left:none;border-right:none;border-top:none;border-bottom:none;">
+                <p style="margin-top:0,0000pt;margin-bottom:0,0000pt;"><span style="font-family:Arial;font-size:15px;">Visibilidad UI</span></p>
+            </td>
+            <td style="width:81,8000pt;padding:0,0000pt 5,4000pt 0,0000pt 5,4000pt ;border-left:none;border-right:none;border-top:none;border-bottom:none;">
+                <p style="margin-top:0,0000pt;margin-bottom:0,0000pt;"><span style="font-family:Arial;font-size:15px;">❌</span></p>
+            </td>
+            <td style="width:156,1500pt;padding:0,0000pt 5,4000pt 0,0000pt 5,4000pt ;border-left:none;border-right:none;border-top:none;border-bottom:none;">
+                <p style="margin-top:0,0000pt;margin-bottom:0,0000pt;"><span style="font-family:Arial;font-size:15px;">✅</span></p>
+            </td>
+        </tr>
+        <tr>
+            <td style="width:105,0000pt;padding:0,0000pt 5,4000pt 0,0000pt 5,4000pt ;border-left:none;border-right:none;border-top:none;border-bottom:none;">
+                <p style="margin-top:0,0000pt;margin-bottom:0,0000pt;"><span style="font-family:Arial;font-size:15px;">Idempotencia</span></p>
+            </td>
+            <td style="width:81,8000pt;padding:0,0000pt 5,4000pt 0,0000pt 5,4000pt ;border-left:none;border-right:none;border-top:none;border-bottom:none;">
+                <p style="margin-top:0,0000pt;margin-bottom:0,0000pt;"><span style="font-family:Arial;font-size:15px;">❌</span></p>
+            </td>
+            <td style="width:156,1500pt;padding:0,0000pt 5,4000pt 0,0000pt 5,4000pt ;border-left:none;border-right:none;border-top:none;border-bottom:none;">
+                <p style="margin-top:0,0000pt;margin-bottom:0,0000pt;"><span style="font-family:Arial;font-size:15px;">⚠️ (depende del dev)</span></p>
+            </td>
+        </tr>
+        <tr>
+            <td style="width:105,0000pt;padding:0,0000pt 5,4000pt 0,0000pt 5,4000pt ;border-left:none;border-right:none;border-top:none;border-bottom:none;">
+                <p style="margin-top:0,0000pt;margin-bottom:0,0000pt;"><span style="font-family:Arial;font-size:15px;">Paralelismo real</span></p>
+            </td>
+            <td style="width:81,8000pt;padding:0,0000pt 5,4000pt 0,0000pt 5,4000pt ;border-left:none;border-right:none;border-top:none;border-bottom:none;">
+                <p style="margin-top:0,0000pt;margin-bottom:0,0000pt;"><span style="font-family:Arial;font-size:15px;">❌</span></p>
+            </td>
+            <td style="width:156,1500pt;padding:0,0000pt 5,4000pt 0,0000pt 5,4000pt ;border-left:none;border-right:none;border-top:none;border-bottom:none;">
+                <p style="margin-top:0,0000pt;margin-bottom:0,0000pt;"><span style="font-family:Arial;font-size:15px;">❌</span></p>
+            </td>
+        </tr>
+        <tr>
+            <td style="width:105,0000pt;padding:0,0000pt 5,4000pt 0,0000pt 5,4000pt ;border-left:none;border-right:none;border-top:none;border-bottom:none;">
+                <p style="margin-top:0,0000pt;margin-bottom:0,0000pt;"><span style="font-family:Arial;font-size:15px;">Worker persistente</span></p>
+            </td>
+            <td style="width:81,8000pt;padding:0,0000pt 5,4000pt 0,0000pt 5,4000pt ;border-left:none;border-right:none;border-top:none;border-bottom:none;">
+                <p style="margin-top:0,0000pt;margin-bottom:0,0000pt;"><span style="font-family:Arial;font-size:15px;">❌</span></p>
+            </td>
+            <td style="width:156,1500pt;padding:0,0000pt 5,4000pt 0,0000pt 5,4000pt ;border-left:none;border-right:none;border-top:none;border-bottom:none;">
+                <p style="margin-top:0,0000pt;margin-bottom:0,0000pt;"><span style="font-family:Arial;font-size:15px;">❌</span></p>
+            </td>
+        </tr>
+    </tbody>
+</table>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">   Observa que&nbsp;</span><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">ambos carecen de worker real</span></strong><span style="font-family:Arial;font-size:15px;">.</span></p>
+<p style="margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">&nbsp;</span></p>
+<h1 style="margin-top:16,1000pt;margin-bottom:16,1000pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:32px;">5️⃣ Qu&eacute; NO hace el jobrunner (honestidad)</span></strong></h1>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">❌ No escucha<br>&nbsp;❌ No ejecuta en paralelo<br>&nbsp;❌ No escala autom&aacute;ticamente<br>&nbsp;❌ No garantiza tiempo de ejecuci&oacute;n<br>&nbsp;❌ No asegura throughput</span></p>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">   Todo esto&nbsp;</span><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">requiere infraestructura externa</span></strong><span style="font-family:Arial;font-size:15px;">, que odoo.sh no permite.</span></p>
+<p style="margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">&nbsp;</span></p>
+<h1 style="margin-top:16,1000pt;margin-bottom:16,1000pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:32px;">6️⃣ Por qu&eacute; OCA cre&oacute; esto (raz&oacute;n real)</span></strong></h1>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">Porque hab&iacute;a 3 opciones:</span></p>
+<ul>
+    <li><span style="font-family:Arial;font-size:15px;">1.&nbsp;❌ No ofrecer nada async en odoo.sh</span></li>
+    <li><span style="font-family:Arial;font-size:15px;">2.&nbsp;❌ Forzar soluciones peligrosas</span></li>
+    <li><span style="font-family:Arial;font-size:15px;">3.&nbsp;✅ Emular lo m&iacute;nimo seguro con cron + DB</span></li>
+</ul>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">Eligieron&nbsp;</span><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">la opci&oacute;n menos mala</span></strong><span style="font-family:Arial;font-size:15px;">.</span></p>
+<p style="margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">&nbsp;</span></p>
+<h1 style="margin-top:16,1000pt;margin-bottom:16,1000pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:32px;">7️⃣ &iquest;Es mejor que un cron &ldquo;a mano&rdquo;?</span></strong></h1>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">S&iacute;, rotundamente</span></strong><span style="font-family:Arial;font-size:15px;">, si necesitas:</span></p>
+<ul>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Migraciones largas</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Reintentos</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Control de errores</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Observabilidad</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">No perder progreso</span></li>
+</ul>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">Un cron normal:</span></p>
+<ul>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">No sabe qu&eacute; fall&oacute;</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">No puede retomar</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">No es auditable</span></li>
+</ul>
+<p style="margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">&nbsp;</span></p>
+<h1 style="margin-top:16,1000pt;margin-bottom:16,1000pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:32px;">8️⃣ &iquest;Es viable para tu caso? (evaluaci&oacute;n honesta)</span></strong></h1>
+<h3 style="margin-top:14,0500pt;margin-bottom:14,0500pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:19px;">✔ S&iacute;, si:</span></strong></h3>
+<ul>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Migraci&oacute;n controlada</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Batch jobs</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Ventanas de tiempo</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">No tiempo real</span></li>
+</ul>
+<h3 style="margin-top:14,0500pt;margin-bottom:14,0500pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:19px;">❌ No, si:</span></strong></h3>
+<ul>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Necesitas near-real-time</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Miles por minuto</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">SLAs estrictos</span></li>
+</ul>
+<p style="margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">&nbsp;</span></p>
+<h1 style="margin-top:16,1000pt;margin-bottom:16,1000pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:32px;">9️⃣ Qu&eacute; deber&iacute;as comunicar a tu equipo</span></strong></h1>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">Te dejo un texto casi &ldquo;copiable&rdquo;:</span></p>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">&ldquo;queue_job_cron_jobrunner&nbsp;no es un worker real, sino una emulaci&oacute;n basada en cron y locking en base de datos. Permite ejecuci&oacute;n controlada, reintentos y visibilidad, pero no ofrece paralelismo ni garant&iacute;as de throughput. Es viable para migraciones masivas por batch en odoo.sh, pero no para procesamiento en tiempo real.&rdquo;</span></p>
+<p style="margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">&nbsp;</span></p>
+<h1 style="margin-top:16,1000pt;margin-bottom:16,1000pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:32px;">   Conclusi&oacute;n clara</span></strong></h1>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">No es una soluci&oacute;n potente.</span></strong><span style="font-family:Arial;font-size:15px;"><br></span><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;"> Es una soluci&oacute;n segura dentro de un entorno restringido.</span></strong></p>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">Y eso, en odoo.sh, muchas veces es&nbsp;</span><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">lo m&aacute;ximo posible</span></strong><span style="font-family:Arial;font-size:15px;">.</span></p>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">&nbsp;</span></p>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">&nbsp;</span></p>
+<h1 style="margin-top:16,1000pt;margin-bottom:16,1000pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:32px;">   Qu&eacute; pasa EXACTAMENTE cuando corre el cron Jobrunner</span></strong></h1>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">Vamos paso a paso:</span></p>
+<p style="margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">&nbsp;</span></p>
+<h2 style="margin-top:14,9500pt;margin-bottom:14,9500pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:24px;">   Paso 1 &ndash; El cron despierta</span></strong></h2>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">Odoo ejecuta algo como:</span></p>
+<p style="margin-top:0,0000pt;margin-bottom:0,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">queue_job.jobrunner.run()<br></span></p>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">Esto ocurre:</span></p>
+<ul>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">En un worker normal</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Compitiendo con usuarios y otros crons</span></li>
+</ul>
+<p style="margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">&nbsp;</span></p>
+<h2 style="margin-top:14,9500pt;margin-bottom:14,9500pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:24px;">   Paso 2 &ndash; El jobrunner busca jobs pendientes</span></strong></h2>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">El runner hace algo equivalente a:</span></p>
+<p style="margin-top:0,0000pt;margin-bottom:0,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">SELECT * FROM queue_job<br>WHERE state = &apos;pending&apos;<br>ORDER BY priority, date_created<br>LIMIT N<br></span></p>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">  &nbsp;</span><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">N es peque&ntilde;o</span></strong><span style="font-family:Arial;font-size:15px;">&nbsp;(muy importante):</span></p>
+<ul>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Por defecto 1</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">A veces configurable, pero limitado</span></li>
+</ul>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">  &nbsp;</span><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">NO toma toda la cola</span></strong></p>
+<p style="margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">&nbsp;</span></p>
+<h2 style="margin-top:14,9500pt;margin-bottom:14,9500pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:24px;">▶️ Paso 3 &ndash; Ejecuta el job</span></strong></h2>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">Para cada job seleccionado:</span></p>
+<ul>
+    <li><span style="font-family:Arial;font-size:15px;">1.&nbsp;Cambia estado a started</span></li>
+    <li><span style="font-family:Arial;font-size:15px;">2.&nbsp;Abre una transacci&oacute;n</span></li>
+    <li><span style="font-family:Arial;font-size:15px;">3.&nbsp;Ejecuta:</span></li>
+</ul>
+<p style="margin-top:0,0000pt;margin-bottom:0,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">model.method(*args)<br></span></p>
+<ul>
+    <li><span style="font-family:Arial;font-size:15px;">4.&nbsp;Si:</span>
+        <ul>
+            <li><span style="font-family:Arial;font-size:15px;">a.&nbsp;✔ OK &rarr; done</span></li>
+            <li><span style="font-family:Arial;font-size:15px;">b.&nbsp;❌ Exception &rarr; failed</span></li>
+        </ul>
+    </li>
+    <li><span style="font-family:Arial;font-size:15px;">5.&nbsp;Commit</span></li>
+</ul>
+<p style="margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">&nbsp;</span></p>
+<h2 style="margin-top:14,9500pt;margin-bottom:14,9500pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:24px;">   &iquest;Uno por ejecuci&oacute;n o varios?</span></strong></h2>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">En&nbsp;</span><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">odoo.sh</span></strong><span style="font-family:Arial;font-size:15px;">&nbsp;y con cron_jobrunner:</span></p>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">⚠️&nbsp;</span><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">Normalmente: 1 job por ejecuci&oacute;n de cron</span></strong></p>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">NO hay:</span></p>
+<ul>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Paralelismo real</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Pool de workers</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Consumo masivo de cola</span></li>
+</ul>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">Esto es&nbsp;</span><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">clave para tus pruebas de rendimiento</span></strong><span style="font-family:Arial;font-size:15px;">.</span></p>
+<p style="margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">&nbsp;</span></p>
+<h1 style="margin-top:16,1000pt;margin-bottom:16,1000pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:32px;">❓ &iquest;Est&aacute; &ldquo;escuchando&rdquo; permanentemente?</span></strong></h1>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">❌&nbsp;</span><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">NO</span></strong></p>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">No hay:</span></p>
+<ul>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Daemon</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Thread</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Loop infinito</span></li>
+</ul>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">Es literalmente:</span></p>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">⏰ &ldquo;Me despierto &rarr; miro si hay algo &rarr; ejecuto uno &rarr; me voy&rdquo;</span></p>
+<p style="margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">&nbsp;</span></p>
+<h1 style="margin-top:16,1000pt;margin-bottom:16,1000pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:32px;">   &iquest;Por qu&eacute; no procesa toda la cola?</span></strong></h1>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">Porque:</span></p>
+<ul>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Un cron:</span>
+        <ul>
+            <li><span style="font-family:'Courier New';font-size:15px;">o&nbsp;</span><span style="font-family:Arial;font-size:15px;">Debe terminar r&aacute;pido</span></li>
+            <li><span style="font-family:'Courier New';font-size:15px;">o&nbsp;</span><span style="font-family:Arial;font-size:15px;">No puede bloquear workers</span></li>
+        </ul>
+    </li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">odoo.sh:</span>
+        <ul>
+            <li><span style="font-family:'Courier New';font-size:15px;">o&nbsp;</span><span style="font-family:Arial;font-size:15px;">Mata procesos largos</span></li>
+            <li><span style="font-family:'Courier New';font-size:15px;">o&nbsp;</span><span style="font-family:Arial;font-size:15px;">Limita CPU / memoria</span></li>
+        </ul>
+    </li>
+</ul>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">   Procesar muchos jobs en un solo cron&nbsp;</span><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">rompe la instancia</span></strong><span style="font-family:Arial;font-size:15px;">.</span></p>
+<p style="margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">&nbsp;</span></p>
+<h1 style="margin-top:16,1000pt;margin-bottom:16,1000pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:32px;">   Qu&eacute; implica esto para tu escenario (migrar adjuntos a S3)</span></strong></h1>
+<h3 style="margin-top:14,0500pt;margin-bottom:14,0500pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:19px;">T&uacute; dijiste:</span></strong></h3>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">cientos a miles de jobs cada 15 minutos</span></p>
+<h3 style="margin-top:14,0500pt;margin-bottom:14,0500pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:19px;">Realidad t&eacute;cnica:</span></strong></h3>
+<ul>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Si el cron corre cada 1 minuto</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Y ejecuta 1 job</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Capacidad &asymp;&nbsp;</span><strong><span style="font-family:Arial;font-size:15px;">60 jobs / hora</span></strong></li>
+</ul>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">   Ah&iacute; est&aacute; el cuello de botella.</span></p>
+<p style="margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">&nbsp;</span></p>
+<h1 style="margin-top:16,1000pt;margin-bottom:16,1000pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:32px;">   Entonces&hellip; &iquest;c&oacute;mo funciona realmente en producci&oacute;n?</span></strong></h1>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">La soluci&oacute;n realista es:</span></p>
+<ul>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><strong><span style="font-family:Arial;font-size:15px;">Batching en el cron</span></strong></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Jobs:</span>
+        <ul>
+            <li><span style="font-family:'Courier New';font-size:15px;">o&nbsp;</span><span style="font-family:Arial;font-size:15px;">Muy cortos</span></li>
+            <li><span style="font-family:'Courier New';font-size:15px;">o&nbsp;</span><span style="font-family:Arial;font-size:15px;">Idempotentes</span></li>
+        </ul>
+    </li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Cron:</span>
+        <ul>
+            <li><span style="font-family:'Courier New';font-size:15px;">o&nbsp;</span><span style="font-family:Arial;font-size:15px;">Encola&nbsp;</span><em><span style="font-family:Arial;font-size:15px;">pocos</span></em><span style="font-family:Arial;font-size:15px;">&nbsp;jobs</span></li>
+            <li><span style="font-family:'Courier New';font-size:15px;">o&nbsp;</span><span style="font-family:Arial;font-size:15px;">Runner los va consumiendo lentamente</span></li>
+        </ul>
+    </li>
+</ul>
+<p style="margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">&nbsp;</span></p>
+<h1 style="margin-top:16,1000pt;margin-bottom:16,1000pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:32px;">   Analog&iacute;a &uacute;til</span></strong></h1>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">Piensa en esto como:</span></p>
+<ul>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">queue_job&nbsp;&rarr; una lista de tareas en papel</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">cron_jobrunner&nbsp;&rarr; una persona que:</span>
+        <ul>
+            <li><span style="font-family:'Courier New';font-size:15px;">o&nbsp;</span><span style="font-family:Arial;font-size:15px;">Entra a la oficina cada X minutos</span></li>
+            <li><span style="font-family:'Courier New';font-size:15px;">o&nbsp;</span><span style="font-family:Arial;font-size:15px;">Hace&nbsp;</span><strong><span style="font-family:Arial;font-size:15px;">1 tarea</span></strong></li>
+            <li><span style="font-family:'Courier New';font-size:15px;">o&nbsp;</span><span style="font-family:Arial;font-size:15px;">Se va</span></li>
+        </ul>
+    </li>
+</ul>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">No es una f&aacute;brica, es un becario   </span></p>
+<p style="margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">&nbsp;</span></p>
+<h1 style="margin-top:16,1000pt;margin-bottom:16,1000pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:32px;">⚠️ Errores comunes (ahora que lo entiendes)</span></strong></h1>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">❌ Crear jobs largos<br>&nbsp;❌ Encolar miles esperando ejecuci&oacute;n r&aacute;pida<br>&nbsp;❌ Suponer paralelismo<br>&nbsp;❌ Usar while dentro de jobs</span></p>
+<p style="margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">&nbsp;</span></p>
+<h1 style="margin-top:16,1000pt;margin-bottom:16,1000pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:32px;">   Por qu&eacute; OCA hizo esto</span></strong></h1>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">Porque:</span></p>
+<ul>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">odoo.sh&nbsp;</span><strong><span style="font-family:Arial;font-size:15px;">no permite</span></strong><span style="font-family:Arial;font-size:15px;">&nbsp;otra cosa</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Prefieren:</span>
+        <ul>
+            <li><span style="font-family:'Courier New';font-size:15px;">o&nbsp;</span><span style="font-family:Arial;font-size:15px;">Algo lento pero seguro</span></li>
+            <li><span style="font-family:'Courier New';font-size:15px;">o&nbsp;</span><span style="font-family:Arial;font-size:15px;">Antes que crashear instancias</span></li>
+        </ul>
+    </li>
+</ul>
+<h1 style="margin-top:16,1000pt;margin-bottom:16,1000pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:32px;">   Por qu&eacute; est&aacute;s limitado (recordatorio r&aacute;pido)</span></strong></h1>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">En odoo.sh:</span></p>
+<ul>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">❌ No puedes lanzar workers adicionales</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">❌ No puedes correr daemons</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">❌ No puedes controlar --workers</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">❌ No puedes usar Redis / RabbitMQ</span></li>
+</ul>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">  &nbsp;</span><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">Todo corre dentro de un worker HTTP/cron</span></strong><span style="font-family:Arial;font-size:15px;"><br>&nbsp;  &nbsp;</span><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">Cada cron = una ejecuci&oacute;n secuencial</span></strong></p>
+<p style="margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">&nbsp;</span></p>
+<h1 style="margin-top:16,1000pt;margin-bottom:16,1000pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:32px;">   Opciones REALES para acelerar (ordenadas de m&aacute;s segura &rarr; m&aacute;s riesgosa)</span></strong></h1>
+<p style="margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">&nbsp;</span></p>
+<h2 style="margin-top:14,9500pt;margin-bottom:14,9500pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:24px;">   OPCI&Oacute;N 1 &mdash; Ejecutar m&aacute;s de un job por ejecuci&oacute;n de cron (RECOMENDADA)</span></strong></h2>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">Esta es la&nbsp;</span><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">mejor</span></strong><span style="font-family:Arial;font-size:15px;">&nbsp;y m&aacute;s usada en producci&oacute;n en odoo.sh.</span></p>
+<h3 style="margin-top:14,0500pt;margin-bottom:14,0500pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:19px;">Idea</span></strong></h3>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">En lugar de:</span></p>
+<ul>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">1 cron &rarr; 1 job</span></li>
+</ul>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">Hacer:</span></p>
+<ul>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">1 cron &rarr;&nbsp;</span><strong><span style="font-family:Arial;font-size:15px;">N jobs</span></strong></li>
+</ul>
+<h3 style="margin-top:14,0500pt;margin-bottom:14,0500pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:19px;">C&oacute;mo</span></strong></h3>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">Configuras el jobrunner para:</span></p>
+<ul>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Tomar varios jobs pending</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Ejecutarlos en&nbsp;</span><strong><span style="font-family:Arial;font-size:15px;">un mismo cron</span></strong></li>
+</ul>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">⚠️ OCA permite esto&nbsp;</span><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">con l&iacute;mite</span></strong><span style="font-family:Arial;font-size:15px;">.</span></p>
+<h3 style="margin-top:14,0500pt;margin-bottom:14,0500pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:19px;">Riesgos controlados</span></strong></h3>
+<ul>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Cron m&aacute;s largo</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Mayor consumo de CPU</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Pero&nbsp;</span><strong><span style="font-family:Arial;font-size:15px;">estable si N es peque&ntilde;o</span></strong></li>
+</ul>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">   En la pr&aacute;ctica:</span></p>
+<ul>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">5&ndash;10 jobs por cron &rarr;&nbsp;</span><strong><span style="font-family:Arial;font-size:15px;">seguro</span></strong></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">20+ &rarr; depende del tama&ntilde;o del job</span></li>
+</ul>
+<p style="margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">&nbsp;</span></p>
+<h2 style="margin-top:14,9500pt;margin-bottom:14,9500pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:24px;">   OPCI&Oacute;N 2 &mdash; Aumentar la frecuencia del cron (limitado)</span></strong></h2>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">Ejemplo:</span></p>
+<ul>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Cada 1 minuto &rarr; cada 30 segundos ❌ (odoo no lo soporta)</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Cada 1 minuto &rarr; cada 2 minutos (empeora)</span></li>
+</ul>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">  &nbsp;</span><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">No puedes bajar de 1 minuto</span></strong></p>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">As&iacute; que esto&nbsp;</span><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">NO ayuda mucho</span></strong><span style="font-family:Arial;font-size:15px;">.</span></p>
+<p style="margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">&nbsp;</span></p>
+<h2 style="margin-top:14,9500pt;margin-bottom:14,9500pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:24px;">   OPCI&Oacute;N 3 &mdash; M&uacute;ltiples crons Jobrunner (con cuidado)</span></strong></h2>
+<h3 style="margin-top:14,0500pt;margin-bottom:14,0500pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:19px;">Idea</span></strong></h3>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">Crear&nbsp;</span><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">2 o 3 crons</span></strong><span style="font-family:Arial;font-size:15px;">&nbsp;que ejecuten el jobrunner.</span></p>
+<h3 style="margin-top:14,0500pt;margin-bottom:14,0500pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:19px;">Riesgo</span></strong></h3>
+<ul>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Condiciones de carrera</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Locks en DB</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Jobs ejecut&aacute;ndose dos veces (si no hay locking correcto)</span></li>
+</ul>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">   OCA protege con SELECT &hellip; FOR UPDATE SKIP LOCKED, pero:</span></p>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">⚠️ En odoo.sh&nbsp;</span><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">NO lo recomiendo</span></strong><span style="font-family:Arial;font-size:15px;">&nbsp;sin pruebas muy cuidadosas.</span></p>
+<p style="margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">&nbsp;</span></p>
+<h2 style="margin-top:14,9500pt;margin-bottom:14,9500pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:24px;">   OPCI&Oacute;N 4 &mdash; Jobs que procesan </span></strong><strong><em><span style="font-family:Arial;font-weight:bold;font-style:italic;font-size:24px;">lotes</span></em></strong><strong><span style="font-family:Arial;font-weight:bold;font-size:24px;"> (NO &ldquo;1 job = 1 adjunto&rdquo;)</span></strong></h2>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">Esta es&nbsp;</span><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">la opci&oacute;n m&aacute;s realista para tu caso</span></strong><span style="font-family:Arial;font-size:15px;">.</span></p>
+<h3 style="margin-top:14,0500pt;margin-bottom:14,0500pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:19px;">Cambio de mentalidad</span></strong></h3>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">❌ 1 adjunto = 1 job<br>&nbsp;✅ 1 job =&nbsp;</span><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">20&ndash;100 adjuntos</span></strong></p>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">   Menos jobs &rarr; m&aacute;s throughput</span></p>
+<p style="margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">&nbsp;</span></p>
+<h1 style="margin-top:16,1000pt;margin-bottom:16,1000pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:32px;">   Estrategia RECOMENDADA para tu escenario (S3 + alto volumen)</span></strong></h1>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">Voy a proponerte&nbsp;</span><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">la que realmente funciona en producci&oacute;n</span></strong><span style="font-family:Arial;font-size:15px;">&nbsp;en odoo.sh.</span></p>
+<p style="margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">&nbsp;</span></p>
+<h2 style="margin-top:14,9500pt;margin-bottom:14,9500pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:24px;">   Estrategia h&iacute;brida segura</span></strong></h2>
+<h3 style="margin-top:14,0500pt;margin-bottom:14,0500pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:19px;">1️⃣ Cron encola UN solo job</span></strong></h3>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">Pero ese job:</span></p>
+<ul>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Procesa&nbsp;</span><strong><span style="font-family:Arial;font-size:15px;">un batch de adjuntos</span></strong></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Con l&iacute;mite estricto</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Con corte por tiempo</span></li>
+</ul>
+<p style="margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">&nbsp;</span></p>
+<h3 style="margin-top:14,0500pt;margin-bottom:14,0500pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:19px;">2️⃣ Job con l&iacute;mite de tiempo</span></strong></h3>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">Ejemplo:</span></p>
+<ul>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">M&aacute;x 30 segundos</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">M&aacute;x 50 adjuntos</span></li>
+</ul>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">Cuando se alcanza:</span></p>
+<ul>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Commit</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">El siguiente cron contin&uacute;a</span></li>
+</ul>
+<p style="margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">&nbsp;</span></p>
+<h3 style="margin-top:14,0500pt;margin-bottom:14,0500pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:19px;">3️⃣ Throughput realista</span></strong></h3>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">Supongamos:</span></p>
+<ul>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">1 cron / minuto</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">1 job</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">40 adjuntos por job</span></li>
+</ul>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">  &nbsp;</span><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">&asymp; 2 400 adjuntos / hora</span></strong></p>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">Eso&nbsp;</span><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">s&iacute; escala</span></strong><span style="font-family:Arial;font-size:15px;">.</span></p>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">---------------------</span></p>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">Voy a explicarte&nbsp;</span><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">qu&eacute; pasa por defecto</span></strong><span style="font-family:Arial;font-size:15px;">,&nbsp;</span><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">qu&eacute; NO debes hacer</span></strong><span style="font-family:Arial;font-size:15px;">, y&nbsp;</span><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">el patr&oacute;n correcto y seguro en odoo.sh</span></strong><span style="font-family:Arial;font-size:15px;">.</span></p>
+<p style="margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">&nbsp;</span></p>
+<h2 style="margin-top:14,9500pt;margin-bottom:14,9500pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:24px;">   Comportamiento por defecto de un job batch</span></strong></h2>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">Un&nbsp;</span><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">job</span></strong><span style="font-family:Arial;font-size:15px;">&nbsp;(with_delay().metodo()) tiene&nbsp;</span><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">UN solo estado</span></strong><span style="font-family:Arial;font-size:15px;">:</span></p>
+<ul>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">done</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">failed</span></li>
+</ul>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">  &nbsp;</span><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">No existe estado por &iacute;tem interno</span></strong><span style="font-family:Arial;font-size:15px;">&nbsp;(adjunto, registro, etc.).</span></p>
+<h3 style="margin-top:14,0500pt;margin-bottom:14,0500pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:19px;">Por lo tanto:</span></strong></h3>
+<ul>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">❌ Si&nbsp;</span><strong><span style="font-family:Arial;font-size:15px;">una excepci&oacute;n no controlada</span></strong><span style="font-family:Arial;font-size:15px;">&nbsp;ocurre dentro del loop<br>&nbsp;&rarr;&nbsp;</span><strong><span style="font-family:Arial;font-size:15px;">TODO el job falla</span></strong></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">❌ El runner hace rollback de la transacci&oacute;n</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">❌ Los 40 adjuntos quedan &ldquo;como si nada pas&oacute;&rdquo;</span></li>
+</ul>
+<p style="margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">&nbsp;</span></p>
+<h2 style="margin-top:14,9500pt;margin-bottom:14,9500pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:24px;">   Anti-patr&oacute;n (NO hacer esto)</span></strong></h2>
+<p style="margin-top:0,0000pt;margin-bottom:0,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">for att in attachments:<br>&nbsp; &nbsp; self._upload_one_attachment(att, bucket) &nbsp;# lanza excepci&oacute;n<br></span></p>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">Si&nbsp;</span><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">uno falla</span></strong><span style="font-family:Arial;font-size:15px;">&nbsp;&rarr;&nbsp;</span><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">todo el job falla</span></strong><span style="font-family:Arial;font-size:15px;"><br>&nbsp;Esto es&nbsp;</span><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">peligroso</span></strong><span style="font-family:Arial;font-size:15px;">&nbsp;en migraciones masivas.</span></p>
+<h1 style="margin-top:16,1000pt;margin-bottom:16,1000pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:32px;">✅ Patr&oacute;n correcto: job robusto con manejo interno de errores</span></strong></h1>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">La regla de oro es:</span></p>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">El job casi nunca debe fallar</span></strong><span style="font-family:Arial;font-size:15px;"><br>&nbsp;Los errores se manejan&nbsp;</span><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">por &iacute;tem</span></strong><span style="font-family:Arial;font-size:15px;">, no por job.</span></p>
+<p style="margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">&nbsp;</span></p>
+<h2 style="margin-top:14,9500pt;margin-bottom:14,9500pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:24px;">   Dise&ntilde;o correcto del job batch</span></strong></h2>
+<h3 style="margin-top:14,0500pt;margin-bottom:14,0500pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:19px;">Principios</span></strong></h3>
+<ul>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">El job:</span>
+        <ul>
+            <li><span style="font-family:'Courier New';font-size:15px;">o&nbsp;</span><span style="font-family:Arial;font-size:15px;">Siempre termina en done</span></li>
+            <li><span style="font-family:'Courier New';font-size:15px;">o&nbsp;</span><span style="font-family:Arial;font-size:15px;">Registra errores</span></li>
+            <li><span style="font-family:'Courier New';font-size:15px;">o&nbsp;</span><span style="font-family:Arial;font-size:15px;">Contin&uacute;a con el siguiente adjunto</span></li>
+        </ul>
+    </li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Cada adjunto:</span>
+        <ul>
+            <li><span style="font-family:'Courier New';font-size:15px;">o&nbsp;</span><span style="font-family:Arial;font-size:15px;">Tiene su propio estado</span></li>
+            <li><span style="font-family:'Courier New';font-size:15px;">o&nbsp;</span><span style="font-family:Arial;font-size:15px;">Puede reintentarse despu&eacute;s</span></li>
+        </ul>
+    </li>
+</ul>
+<p style="margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">&nbsp;</span></p>
+<h2 style="margin-top:14,9500pt;margin-bottom:14,9500pt;line-height:114%;"><strong><span style="font-family:Arial;font-weight:bold;font-size:24px;">   Modelo de estados por adjunto (m&iacute;nimo)</span></strong></h2>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">Ejemplo conceptual (no estructura):</span></p>
+<ul>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">s3_state:</span>
+        <ul>
+            <li><span style="font-family:'Courier New';font-size:15px;">o&nbsp;</span><span style="font-family:Arial;font-size:15px;">pending</span></li>
+            <li><span style="font-family:'Courier New';font-size:15px;">o&nbsp;</span><span style="font-family:Arial;font-size:15px;">done</span></li>
+            <li><span style="font-family:'Courier New';font-size:15px;">o&nbsp;</span><span style="font-family:Arial;font-size:15px;">error</span></li>
+        </ul>
+    </li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">s3_error&nbsp;(texto)</span></li>
+</ul>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">C&oacute;digo ideal:<br><br>import time import logging import base64</span></p>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">from odoo import models</span></p>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">_logger = logging.getLogger(</span><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">name</span></strong><span style="font-family:Arial;font-size:15px;">)</span></p>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">class AttachmentBatch(models.Model): _inherit = &quot;ir.attachment&quot;</span></p>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;line-height:114%;"><span style="font-family:Arial;font-size:15px;">def job_migrate_batch_to_s3(self, bucket, limit=40, max_seconds=30):<br>&nbsp; &nbsp; start = time.monotonic()<br>&nbsp; &nbsp; ok = 0<br>&nbsp; &nbsp; errors = 0<br><br>&nbsp; &nbsp; attachments = self.search([<br>&nbsp; &nbsp; &nbsp; &nbsp; (&quot;type&quot;, &quot;=&quot;, &quot;binary&quot;),<br>&nbsp; &nbsp; &nbsp; &nbsp; (&quot;datas&quot;, &quot;!=&quot;, False),<br>&nbsp; &nbsp; &nbsp; &nbsp; (&quot;s3_state&quot;, &quot;=&quot;, &quot;pending&quot;),<br>&nbsp; &nbsp; ], limit=limit, order=&quot;id asc&quot;)<br><br>&nbsp; &nbsp; for att in attachments:<br>&nbsp; &nbsp; &nbsp; &nbsp; # corte por tiempo<br>&nbsp; &nbsp; &nbsp; &nbsp; if time.monotonic() - start &gt; max_seconds:<br>&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; break<br><br>&nbsp; &nbsp; &nbsp; &nbsp; try:<br>&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; self._upload_one_attachment(att, bucket)<br>&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; att.write({<br>&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &quot;s3_state&quot;: &quot;done&quot;,<br>&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &quot;s3_error&quot;: False,<br>&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; })<br>&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; ok += 1<br><br>&nbsp; &nbsp; &nbsp; &nbsp; except Exception as e:<br>&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; _logger.exception(&quot;Error migrando adjunto %s&quot;, att.id)<br>&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; att.write({<br>&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &quot;s3_state&quot;: &quot;error&quot;,<br>&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &quot;s3_error&quot;: str(e),<br>&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; })<br>&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; errors += 1<br>&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; # NO relanzamos la excepci&oacute;n<br><br>&nbsp; &nbsp; _logger.info(<br>&nbsp; &nbsp; &nbsp; &nbsp; &quot;Batch terminado: %s OK, %s errores&quot;,<br>&nbsp; &nbsp; &nbsp; &nbsp; ok, errors<br>&nbsp; &nbsp; )<br><br>&nbsp; &nbsp; return {<br>&nbsp; &nbsp; &nbsp; &nbsp; &quot;processed_ok&quot;: ok,<br>&nbsp; &nbsp; &nbsp; &nbsp; &quot;processed_error&quot;: errors,<br>&nbsp; &nbsp; }<br></span></p>
+<p style="margin-bottom:12,0000pt;padding:0pt 0pt 0pt 0pt ;line-height:114%;"><span style="font-family:Arial;font-size:15px;">&nbsp;</span></p>
+<p style="margin-bottom:12,0000pt;padding:0pt 0pt 0pt 0pt ;line-height:114%;"><span style="font-family:Arial;font-size:15px;">&nbsp;</span></p>
+<h1 style="margin-top:16,1000pt;margin-bottom:16,1000pt;"><strong><span style="font-family:Arial;font-weight:bold;font-size:32px;">   Por qu&eacute; este patr&oacute;n es IDEAL en odoo.sh</span></strong></h1>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;"><span style="font-family:Arial;font-size:15px;">✔ Evita rollbacks masivos<br>&nbsp;✔ Evita jobs fallidos &ldquo;in&uacute;tiles&rdquo;<br>&nbsp;✔ Permite progreso parcial<br>&nbsp;✔ Permite pausar / continuar<br>&nbsp;✔ Tolera errores intermitentes (S3, red)</span></p>
+<p><span style="font-family:Arial;font-size:15px;">&nbsp;</span></p>
+<h1 style="margin-top:16,1000pt;margin-bottom:16,1000pt;"><strong><span style="font-family:Arial;font-weight:bold;font-size:32px;">⚠️ &Uacute;NICA raz&oacute;n v&aacute;lida para fallar el job</span></strong></h1>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;"><span style="font-family:Arial;font-size:15px;">Un job&nbsp;</span><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">solo deber&iacute;a fallar</span></strong><span style="font-family:Arial;font-size:15px;">&nbsp;si:</span></p>
+<ul>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">No hay configuraci&oacute;n (bucket vac&iacute;o)</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Credenciales inv&aacute;lidas</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Error sist&eacute;mico global</span></li>
+</ul>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;"><span style="font-family:Arial;font-size:15px;">Ejemplo:</span></p>
+<p style="margin-top:0,0000pt;margin-bottom:0,0000pt;"><span style="font-family:Arial;font-size:15px;">if not bucket:<br>&nbsp; &nbsp; raise UserError(&quot;Bucket S3 no configurado&quot;)<br></span></p>
+<p style="margin-top:12,0000pt;margin-bottom:12,0000pt;"><span style="font-family:Arial;font-size:15px;">Eso s&iacute; debe marcar el job como failed.</span></p>
+<h1 style="margin-top:16,1000pt;margin-bottom:16,1000pt;"><strong><span style="font-family:Arial;font-weight:bold;font-size:32px;">   Resumen claro</span></strong></h1>
+<table style="border-collapse: collapse;border: none;width: 327px;">
+    <tbody>
+        <tr>
+            <td style="width:71,6500pt;padding:0,0000pt 5,4000pt 0,0000pt 5,4000pt ;border-left:none;border-right:none;border-top:none;border-bottom:none;">
+                <p style="margin-top:0,0000pt;margin-bottom:0,0000pt;text-align:center;"><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">Nivel</span></strong></p>
+            </td>
+            <td style="width:92,3000pt;padding:0,0000pt 5,4000pt 0,0000pt 5,4000pt ;border-left:none;border-right:none;border-top:none;border-bottom:none;">
+                <p style="margin-top:0,0000pt;margin-bottom:0,0000pt;text-align:center;"><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">Manejo</span></strong></p>
+            </td>
+        </tr>
+        <tr>
+            <td style="width:71,6500pt;padding:0,0000pt 5,4000pt 0,0000pt 5,4000pt ;border-left:none;border-right:none;border-top:none;border-bottom:none;">
+                <p style="margin-top:0,0000pt;margin-bottom:0,0000pt;"><span style="font-family:Arial;font-size:15px;">Job</span></p>
+            </td>
+            <td style="width:92,3000pt;padding:0,0000pt 5,4000pt 0,0000pt 5,4000pt ;border-left:none;border-right:none;border-top:none;border-bottom:none;">
+                <p style="margin-top:0,0000pt;margin-bottom:0,0000pt;"><span style="font-family:Arial;font-size:15px;">Casi nunca falla</span></p>
+            </td>
+        </tr>
+        <tr>
+            <td style="width:71,6500pt;padding:0,0000pt 5,4000pt 0,0000pt 5,4000pt ;border-left:none;border-right:none;border-top:none;border-bottom:none;">
+                <p style="margin-top:0,0000pt;margin-bottom:0,0000pt;"><span style="font-family:Arial;font-size:15px;">Adjunto</span></p>
+            </td>
+            <td style="width:92,3000pt;padding:0,0000pt 5,4000pt 0,0000pt 5,4000pt ;border-left:none;border-right:none;border-top:none;border-bottom:none;">
+                <p style="margin-top:0,0000pt;margin-bottom:0,0000pt;"><span style="font-family:Arial;font-size:15px;">Puede fallar</span></p>
+            </td>
+        </tr>
+        <tr>
+            <td style="width:71,6500pt;padding:0,0000pt 5,4000pt 0,0000pt 5,4000pt ;border-left:none;border-right:none;border-top:none;border-bottom:none;">
+                <p style="margin-top:0,0000pt;margin-bottom:0,0000pt;"><span style="font-family:Arial;font-size:15px;">Estado</span></p>
+            </td>
+            <td style="width:92,3000pt;padding:0,0000pt 5,4000pt 0,0000pt 5,4000pt ;border-left:none;border-right:none;border-top:none;border-bottom:none;">
+                <p style="margin-top:0,0000pt;margin-bottom:0,0000pt;"><span style="font-family:Arial;font-size:15px;">Por adjunto</span></p>
+            </td>
+        </tr>
+        <tr>
+            <td style="width:71,6500pt;padding:0,0000pt 5,4000pt 0,0000pt 5,4000pt ;border-left:none;border-right:none;border-top:none;border-bottom:none;">
+                <p style="margin-top:0,0000pt;margin-bottom:0,0000pt;"><span style="font-family:Arial;font-size:15px;">Reintento</span></p>
+            </td>
+            <td style="width:92,3000pt;padding:0,0000pt 5,4000pt 0,0000pt 5,4000pt ;border-left:none;border-right:none;border-top:none;border-bottom:none;">
+                <p style="margin-top:0,0000pt;margin-bottom:0,0000pt;"><span style="font-family:Arial;font-size:15px;">Selectivo</span></p>
+            </td>
+        </tr>
+        <tr>
+            <td style="width:71,6500pt;padding:0,0000pt 5,4000pt 0,0000pt 5,4000pt ;border-left:none;border-right:none;border-top:none;border-bottom:none;">
+                <p style="margin-top:0,0000pt;margin-bottom:0,0000pt;"><span style="font-family:Arial;font-size:15px;">Throughput</span></p>
+            </td>
+            <td style="width:92,3000pt;padding:0,0000pt 5,4000pt 0,0000pt 5,4000pt ;border-left:none;border-right:none;border-top:none;border-bottom:none;">
+                <p style="margin-top:0,0000pt;margin-bottom:0,0000pt;"><span style="font-family:Arial;font-size:15px;">Alto</span></p>
+                <p style="margin-top:0,0000pt;margin-bottom:0,0000pt;"><span style="font-family:Arial;font-size:15px;">&nbsp;</span></p>
+                <p style="margin-top:0,0000pt;margin-bottom:0,0000pt;"><span style="font-family:Arial;font-size:15px;">&nbsp;</span></p>
+            </td>
+        </tr>
+    </tbody>
+</table>
+<p style="margin-bottom:12,0000pt;padding:0pt 0pt 0pt 0pt ;line-height:114%;"><span style="font-family:Arial;font-size:15px;">&nbsp;</span></p>
+<p style="margin-bottom:12,0000pt;padding:0pt 0pt 0pt 0pt ;line-height:114%;"><span style="font-family:Arial;font-size:15px;">&nbsp;</span></p>
+<p style="margin-bottom:12,0000pt;padding:0pt 0pt 0pt 0pt ;line-height:114%;"><span style="font-family:Arial;font-size:15px;">-------------------------------------</span></p>
+<ul>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">En cuanto a los estados:<br><br></span><strong><span style="font-family:Arial;font-size:15px;">Jobs </span></strong><strong><span style="font-family:Arial;font-size:15px;">failed</span></strong><span style="font-family:Arial;font-size:15px;"><br></span><span style="font-family:Arial;font-size:15px;">&nbsp;  &nbsp;</span><strong><span style="font-family:Arial;font-size:15px;">NO se retoman solos</span></strong><span style="font-family:Arial;font-size:15px;">&nbsp;(salvo que t&uacute; lo programes)</span><span style="font-family:Arial;font-size:15px;"><br></span><span style="font-family:Arial;font-size:15px;">&nbsp;   Requieren&nbsp;</span><strong><span style="font-family:Arial;font-size:15px;">acci&oacute;n expl&iacute;cita</span></strong><span style="font-family:Arial;font-size:15px;">&nbsp;(manual o autom&aacute;tica)</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><strong><span style="font-family:Arial;font-size:15px;">Jobs </span></strong><strong><span style="font-family:Arial;font-size:15px;">started</span></strong><strong><span style="font-family:Arial;font-size:15px;"> &ldquo;colgados&rdquo;</span></strong><span style="font-family:Arial;font-size:15px;"><br>&nbsp;  &nbsp;</span><strong><span style="font-family:Arial;font-size:15px;">NADIE los retoma autom&aacute;ticamente</span></strong><span style="font-family:Arial;font-size:15px;"><br></span><span style="font-family:Arial;font-size:15px;">&nbsp;   Debes dise&ntilde;ar un&nbsp;</span><strong><span style="font-family:Arial;font-size:15px;">mecanismo de recuperaci&oacute;n</span></strong></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Esto es as&iacute;&nbsp;</span><strong><span style="font-family:Arial;font-size:15px;">en Odoo 17 + queue_job + odoo.sh</span></strong><span style="font-family:Arial;font-size:15px;">.</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span></li>
+    <li>
+        <h1><span style="font-family:Symbol;font-size:32px;">&middot;&nbsp;</span><strong><span style="font-family:Arial;font-size:32px;">1️⃣ Jobs en estado </span></strong><strong><span style="font-family:Arial;font-size:32px;">failed</span></strong></h1>
+    </li>
+    <li>
+        <h2><span style="font-family:Symbol;font-size:24px;">&middot;&nbsp;</span><strong><span style="font-family:Arial;font-size:24px;">   Qu&eacute; significa t&eacute;cnicamente</span></strong></h2>
+    </li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">El m&eacute;todo lanz&oacute; una excepci&oacute;n&nbsp;</span><strong><span style="font-family:Arial;font-size:15px;">no controlada</span></strong></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">El jobrunner:</span>
+        <ul>
+            <li><span style="font-family:'Courier New';font-size:15px;">o&nbsp;</span><span style="font-family:Arial;font-size:15px;">Captur&oacute; el error</span></li>
+            <li><span style="font-family:'Courier New';font-size:15px;">o&nbsp;</span><span style="font-family:Arial;font-size:15px;">Guard&oacute; stacktrace (exc_info)</span></li>
+            <li><span style="font-family:'Courier New';font-size:15px;">o&nbsp;</span><span style="font-family:Arial;font-size:15px;">Marc&oacute; el job como failed</span></li>
+            <li><span style="font-family:'Courier New';font-size:15px;">o&nbsp;</span><span style="font-family:Arial;font-size:15px;">Hizo rollback de esa ejecuci&oacute;n</span></li>
+        </ul>
+    </li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span></li>
+    <li>
+        <h2><span style="font-family:Symbol;font-size:24px;">&middot;&nbsp;</span><strong><span style="font-family:Arial;font-size:24px;">❓ &iquest;Qui&eacute;n lo retoma?</span></strong></h2>
+    </li>
+    <li>
+        <h3><span style="font-family:Symbol;font-size:19px;">&middot;&nbsp;</span><strong><span style="font-family:Arial;font-size:19px;">❌ Por defecto: NADIE</span></strong></h3>
+    </li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">No existe:</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Retry autom&aacute;tico infinito</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Backoff autom&aacute;tico</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Reintento peri&oacute;dico</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span></li>
+    <li>
+        <h2><span style="font-family:Symbol;font-size:24px;">&middot;&nbsp;</span><strong><span style="font-family:Arial;font-size:24px;">   Opciones reales</span></strong></h2>
+    </li>
+    <li>
+        <h3><span style="font-family:Symbol;font-size:19px;">&middot;&nbsp;</span><strong><span style="font-family:Arial;font-size:19px;">Opci&oacute;n A &mdash; Manual (UI)</span></strong></h3>
+    </li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Un usuario t&eacute;cnico puede:</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Ir a&nbsp;</span><strong><span style="font-family:Arial;font-size:15px;">Cola &rarr; Jobs</span></strong></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Ver el error</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Reintentar manualmente (si est&aacute; habilitado)</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">⚠️ Esto&nbsp;</span><strong><span style="font-family:Arial;font-size:15px;">no escala</span></strong><span style="font-family:Arial;font-size:15px;">&nbsp;para migraciones masivas.</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span></li>
+    <li>
+        <h3><span style="font-family:Symbol;font-size:19px;">&middot;&nbsp;</span><strong><span style="font-family:Arial;font-size:19px;">Opci&oacute;n B &mdash; Autom&aacute;tica (RECOMENDADA)</span></strong></h3>
+    </li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Dise&ntilde;ar un&nbsp;</span><strong><span style="font-family:Arial;font-size:15px;">cron de recuperaci&oacute;n</span></strong><span style="font-family:Arial;font-size:15px;">:</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">def cron_retry_failed_jobs(self):<br>&nbsp; &nbsp; failed_jobs = self.env[&quot;queue.job&quot;].search([<br>&nbsp; &nbsp; &nbsp; &nbsp; (&quot;state&quot;, &quot;=&quot;, &quot;failed&quot;),<br>&nbsp; &nbsp; &nbsp; &nbsp; (&quot;retry&quot;, &quot;&lt;&quot;, 3),<br>&nbsp; &nbsp; ], limit=10)<br><br>&nbsp; &nbsp; for job in failed_jobs:<br>&nbsp; &nbsp; &nbsp; &nbsp; job.requeue()<br></span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">   Esto&nbsp;</span><strong><span style="font-family:Arial;font-size:15px;">NO viene out-of-the-box</span></strong><span style="font-family:Arial;font-size:15px;">:<br>&nbsp;t&uacute; lo implementas.</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span></li>
+    <li>
+        <h1><span style="font-family:Symbol;font-size:32px;">&middot;&nbsp;</span><strong><span style="font-family:Arial;font-size:32px;">2️⃣ Jobs en estado </span></strong><strong><span style="font-family:Arial;font-size:32px;">started</span></strong><strong><span style="font-family:Arial;font-size:32px;"> (los m&aacute;s peligrosos)</span></strong></h1>
+    </li>
+    <li>
+        <h2><span style="font-family:Symbol;font-size:24px;">&middot;&nbsp;</span><strong><span style="font-family:Arial;font-size:24px;">   Qu&eacute; significa</span></strong></h2>
+    </li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">El job fue tomado por el runner</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Marcado como started</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Pero:</span>
+        <ul>
+            <li><span style="font-family:'Courier New';font-size:15px;">o&nbsp;</span><span style="font-family:Arial;font-size:15px;">El proceso muri&oacute;</span></li>
+            <li><span style="font-family:'Courier New';font-size:15px;">o&nbsp;</span><span style="font-family:Arial;font-size:15px;">El cron fue matado</span></li>
+            <li><span style="font-family:'Courier New';font-size:15px;">o&nbsp;</span><span style="font-family:Arial;font-size:15px;">Hubo timeout</span></li>
+            <li><span style="font-family:'Courier New';font-size:15px;">o&nbsp;</span><span style="font-family:Arial;font-size:15px;">Odoo.sh reinici&oacute; el worker</span></li>
+        </ul>
+    </li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">  &nbsp;</span><strong><span style="font-family:Arial;font-size:15px;">Nunca lleg&oacute; a marcarse </span></strong><strong><span style="font-family:Arial;font-size:15px;">done</span></strong><strong><span style="font-family:Arial;font-size:15px;"> ni </span></strong><strong><span style="font-family:Arial;font-size:15px;">failed</span></strong></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span></li>
+    <li>
+        <h2><span style="font-family:Symbol;font-size:24px;">&middot;&nbsp;</span><strong><span style="font-family:Arial;font-size:24px;">❗ &iquest;Qui&eacute;n los retoma?</span></strong></h2>
+    </li>
+    <li>
+        <h3><span style="font-family:Symbol;font-size:19px;">&middot;&nbsp;</span><strong><span style="font-family:Arial;font-size:19px;">❌ Nadie autom&aacute;ticamente</span></strong></h3>
+    </li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Esto es&nbsp;</span><strong><span style="font-family:Arial;font-size:15px;">clave</span></strong><span style="font-family:Arial;font-size:15px;">:</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">queue_job_cron_jobrunner&nbsp;</span><strong><span style="font-family:Arial;font-size:15px;">NO tiene watchdog</span></strong></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span></li>
+    <li>
+        <h2><span style="font-family:Symbol;font-size:24px;">&middot;&nbsp;</span><strong><span style="font-family:Arial;font-size:24px;">   Riesgo real</span></strong></h2>
+    </li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Jobs quedan&nbsp;</span><strong><span style="font-family:Arial;font-size:15px;">bloqueados para siempre</span></strong></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">No se vuelven a ejecutar</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">No se liberan solos</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span></li>
+    <li>
+        <h1><span style="font-family:Symbol;font-size:32px;">&middot;&nbsp;</span><strong><span style="font-family:Arial;font-size:32px;">3️⃣ Qu&eacute; debes hacer OBLIGATORIAMENTE</span></strong></h1>
+    </li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Si usas batch jobs en odoo.sh,&nbsp;</span><strong><span style="font-family:Arial;font-size:15px;">DEBES</span></strong><span style="font-family:Arial;font-size:15px;">&nbsp;implementar:</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">  &nbsp;</span><strong><span style="font-family:Arial;font-size:15px;">un mecanismo de rescate de jobs &ldquo;hu&eacute;rfanos&rdquo;</span></strong></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span></li>
+    <li>
+        <h2><span style="font-family:Symbol;font-size:24px;">&middot;&nbsp;</span><strong><span style="font-family:Arial;font-size:24px;">   Patr&oacute;n seguro de rescate</span></strong></h2>
+    </li>
+    <li>
+        <h3><span style="font-family:Symbol;font-size:19px;">&middot;&nbsp;</span><strong><span style="font-family:Arial;font-size:19px;">Regla</span></strong></h3>
+    </li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Un job started m&aacute;s viejo que X minutos &rarr;&nbsp;</span><strong><span style="font-family:Arial;font-size:15px;">se considera muerto</span></strong></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span></li>
+    <li>
+        <h3><span style="font-family:Symbol;font-size:19px;">&middot;&nbsp;</span><strong><span style="font-family:Arial;font-size:19px;">Cron de rescate (ejemplo)</span></strong></h3>
+    </li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">from datetime import timedelta<br>from odoo import fields<br><br>def cron_rescue_stuck_jobs(self):<br>&nbsp; &nbsp; limit_date = fields.Datetime.now() - timedelta(minutes=30)<br><br>&nbsp; &nbsp; stuck_jobs = self.env[&quot;queue.job&quot;].search([<br>&nbsp; &nbsp; &nbsp; &nbsp; (&quot;state&quot;, &quot;=&quot;, &quot;started&quot;),<br>&nbsp; &nbsp; &nbsp; &nbsp; (&quot;date_started&quot;, &quot;&lt;&quot;, limit_date),<br>&nbsp; &nbsp; ], limit=10)<br><br>&nbsp; &nbsp; for job in stuck_jobs:<br>&nbsp; &nbsp; &nbsp; &nbsp; job.write({<br>&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &quot;state&quot;: &quot;pending&quot;,<br>&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &quot;date_started&quot;: False,<br>&nbsp; &nbsp; &nbsp; &nbsp; })<br></span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">   Esto es&nbsp;</span><strong><span style="font-family:Arial;font-size:15px;">com&uacute;n y necesario</span></strong><span style="font-family:Arial;font-size:15px;">&nbsp;en odoo.sh.</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span></li>
+    <li>
+        <h1><span style="font-family:Symbol;font-size:32px;">&middot;&nbsp;</span><strong><span style="font-family:Arial;font-size:32px;">4️⃣ C&oacute;mo se relaciona esto con batch jobs</span></strong></h1>
+    </li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Aqu&iacute; est&aacute; la clave que tranquiliza:</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Si usas el patr&oacute;n correcto:</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Job:</span>
+        <ul>
+            <li><span style="font-family:'Courier New';font-size:15px;">o&nbsp;</span><span style="font-family:Arial;font-size:15px;">Nunca falla</span></li>
+            <li><span style="font-family:'Courier New';font-size:15px;">o&nbsp;</span><span style="font-family:Arial;font-size:15px;">Maneja errores por &iacute;tem</span></li>
+        </ul>
+    </li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Estados reales:</span>
+        <ul>
+            <li><span style="font-family:'Courier New';font-size:15px;">o&nbsp;</span><span style="font-family:Arial;font-size:15px;">Est&aacute;n en los adjuntos, no en el job</span></li>
+        </ul>
+    </li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Entonces:</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Un job &ldquo;colgado&rdquo;:</span>
+        <ul>
+            <li><span style="font-family:'Courier New';font-size:15px;">o&nbsp;</span><span style="font-family:Arial;font-size:15px;">Solo pierde&nbsp;</span><strong><span style="font-family:Arial;font-size:15px;">un batch</span></strong></li>
+            <li><span style="font-family:'Courier New';font-size:15px;">o&nbsp;</span><span style="font-family:Arial;font-size:15px;">No corrompe datos</span></li>
+            <li><span style="font-family:'Courier New';font-size:15px;">o&nbsp;</span><span style="font-family:Arial;font-size:15px;">Se puede reejecutar</span></li>
+        </ul>
+    </li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span></li>
+    <li>
+        <h1><span style="font-family:Symbol;font-size:32px;">&middot;&nbsp;</span><strong><span style="font-family:Arial;font-size:32px;">5️⃣ Qu&eacute; NO debes esperar del framework</span></strong></h1>
+    </li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Honestidad total:</span></li>
+</ul>
+<table style="border-collapse: collapse;border: none;width: 394px;">
+    <tbody>
+        <tr>
+            <td style="width:136,3000pt;padding:0,0000pt 5,4000pt 0,0000pt 5,4000pt ;border-left:none;border-right:none;border-top:none;border-bottom:none;">
+                <p style="margin-top:0,0000pt;margin-bottom:0,0000pt;text-align:center;"><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">Esperabas</span></strong></p>
+            </td>
+            <td style="width:61,0000pt;padding:0,0000pt 5,4000pt 0,0000pt 5,4000pt ;border-left:none;border-right:none;border-top:none;border-bottom:none;">
+                <p style="margin-top:0,0000pt;margin-bottom:0,0000pt;text-align:center;"><strong><span style="font-family:Arial;font-weight:bold;font-size:15px;">Realidad</span></strong></p>
+            </td>
+        </tr>
+        <tr>
+            <td style="width:136,3000pt;padding:0,0000pt 5,4000pt 0,0000pt 5,4000pt ;border-left:none;border-right:none;border-top:none;border-bottom:none;">
+                <p style="margin-top:0,0000pt;margin-bottom:0,0000pt;"><span style="font-family:Arial;font-size:15px;">Retry autom&aacute;tico infinito</span></p>
+            </td>
+            <td style="width:61,0000pt;padding:0,0000pt 5,4000pt 0,0000pt 5,4000pt ;border-left:none;border-right:none;border-top:none;border-bottom:none;">
+                <p style="margin-top:0,0000pt;margin-bottom:0,0000pt;"><span style="font-family:Arial;font-size:15px;">❌</span></p>
+            </td>
+        </tr>
+        <tr>
+            <td style="width:136,3000pt;padding:0,0000pt 5,4000pt 0,0000pt 5,4000pt ;border-left:none;border-right:none;border-top:none;border-bottom:none;">
+                <p style="margin-top:0,0000pt;margin-bottom:0,0000pt;"><span style="font-family:Arial;font-size:15px;">Reintentos con backoff</span></p>
+            </td>
+            <td style="width:61,0000pt;padding:0,0000pt 5,4000pt 0,0000pt 5,4000pt ;border-left:none;border-right:none;border-top:none;border-bottom:none;">
+                <p style="margin-top:0,0000pt;margin-bottom:0,0000pt;"><span style="font-family:Arial;font-size:15px;">❌</span></p>
+            </td>
+        </tr>
+        <tr>
+            <td style="width:136,3000pt;padding:0,0000pt 5,4000pt 0,0000pt 5,4000pt ;border-left:none;border-right:none;border-top:none;border-bottom:none;">
+                <p style="margin-top:0,0000pt;margin-bottom:0,0000pt;"><span style="font-family:Arial;font-size:15px;">Watchdog</span></p>
+            </td>
+            <td style="width:61,0000pt;padding:0,0000pt 5,4000pt 0,0000pt 5,4000pt ;border-left:none;border-right:none;border-top:none;border-bottom:none;">
+                <p style="margin-top:0,0000pt;margin-bottom:0,0000pt;"><span style="font-family:Arial;font-size:15px;">❌</span></p>
+            </td>
+        </tr>
+        <tr>
+            <td style="width:136,3000pt;padding:0,0000pt 5,4000pt 0,0000pt 5,4000pt ;border-left:none;border-right:none;border-top:none;border-bottom:none;">
+                <p style="margin-top:0,0000pt;margin-bottom:0,0000pt;"><span style="font-family:Arial;font-size:15px;">Autosanaci&oacute;n</span></p>
+            </td>
+            <td style="width:61,0000pt;padding:0,0000pt 5,4000pt 0,0000pt 5,4000pt ;border-left:none;border-right:none;border-top:none;border-bottom:none;">
+                <p style="margin-top:0,0000pt;margin-bottom:0,0000pt;"><span style="font-family:Arial;font-size:15px;">❌</span></p>
+            </td>
+        </tr>
+    </tbody>
+</table>
+<ul>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Todo eso&nbsp;</span><strong><span style="font-family:Arial;font-size:15px;">debe dise&ntilde;arse</span></strong><span style="font-family:Arial;font-size:15px;">.</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span></li>
+    <li>
+        <h1><span style="font-family:Symbol;font-size:32px;">&middot;&nbsp;</span><strong><span style="font-family:Arial;font-size:32px;">6️⃣ Qu&eacute; s&iacute; te da </span></strong><strong><span style="font-family:Arial;font-size:32px;">queue_job</span></strong></h1>
+    </li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Persistencia de jobs</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Locking</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Estados visibles</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Infraestructura m&iacute;nima</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">  &nbsp;</span><strong><span style="font-family:Arial;font-size:15px;">No operaci&oacute;n autom&aacute;tica completa</span></strong></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span></li>
+    <li>
+        <h1><span style="font-family:Symbol;font-size:32px;">&middot;&nbsp;</span><strong><span style="font-family:Arial;font-size:32px;">7️⃣ Recomendaci&oacute;n OPERATIVA</span></strong></h1>
+    </li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">Para tu proyecto:</span></li>
+    <li>
+        <h3><span style="font-family:Symbol;font-size:19px;">&middot;&nbsp;</span><strong><span style="font-family:Arial;font-size:19px;">✔ Implementar 3 crons:</span></strong></h3>
+    </li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><strong><span style="font-family:Arial;font-size:15px;">Encolador</span></strong><span style="font-family:Arial;font-size:15px;">&nbsp;(batch)</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><strong><span style="font-family:Arial;font-size:15px;">Runner</span></strong><span style="font-family:Arial;font-size:15px;">&nbsp;(OCA)</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><strong><span style="font-family:Arial;font-size:15px;">Rescatador</span></strong><span style="font-family:Arial;font-size:15px;">&nbsp;(started colgados + failed selectivos)</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span></li>
+    <li>
+        <h1><span style="font-family:Symbol;font-size:32px;">&middot;&nbsp;</span><strong><span style="font-family:Arial;font-size:32px;">8️⃣ Texto para comunicar al equipo</span></strong></h1>
+    </li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span><span style="font-family:Arial;font-size:15px;">&ldquo;Los jobs fallidos o interrumpidos no se recuperan solos. Es necesario implementar mecanismos expl&iacute;citos de retry y rescate para garantizar continuidad en odoo.sh.&rdquo;</span></li>
+    <li><span style="font-family:Symbol;font-size:15px;">&middot;&nbsp;</span></li>
+</ul>
+<p style="margin-bottom:12,0000pt;padding:0pt 0pt 0pt 0pt ;line-height:114%;"><span style="font-family:Arial;font-size:15px;">&nbsp;</span></p>
+<div style="bottom: 10px; right: 10px; position: absolute;"><a href="https://signatureforemail.com/?utm_source=wth_free_link&utm_medium=external" target="_blank" style="font-size:11px; color: #d0d0d0;">Generador de firmas de correo electrónico</a></p>
